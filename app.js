@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 18777)
-Total output lines: 1539
-
 /* Drawing, geodesic area and Supabase-backed GeoJSON field records. */
 (() => {
   'use strict';
@@ -368,7 +365,777 @@ Total output lines: 1539
         draft = null;
         resetCard();
         renderFieldsList();
-        setStatus('Требуется вход. Авторизуйтесь, чтобы открыть хозяйства и поля.', 'info', false)…9777 tokens truncated…rror', true);
+        setStatus('Требуется вход. Авторизуйтесь, чтобы открыть хозяйства и поля.', 'info', false);
+        showAuthForm('login');
+      }
+      return;
+    }
+    if (previousId && previousId !== nextUser.id) {
+      farms = [];
+      activeFarmId = null;
+      ui.farmSelector.replaceChildren(new Option('Загружаем хозяйства…', ''));
+      ui.farmSelector.disabled = true;
+      clearRenderedFields();
+      resetCard();
+    }
+    if (event === 'SIGNED_IN' || previousId !== nextUser.id || !isReady) {
+      showAuthLoading();
+      await loadFieldsFromSupabase();
+    }
+  }
+
+  function showCropMessage(message, kind = 'info') {
+    ui.cropMessage.textContent = message;
+    ui.cropMessage.className = `crop-message is-${kind}`;
+    ui.cropMessage.hidden = !message;
+  }
+
+  async function loadCropDirectory() {
+    if (!supabase || !activeFarmId) return;
+    ui.cropList.replaceChildren();
+    const loading = document.createElement('p');
+    loading.className = 'crop-empty';
+    loading.textContent = 'Загружаем культуры…';
+    ui.cropList.append(loading);
+    try {
+      const { data, error } = await supabase.from('crops').select('id,name,code,created_at')
+        .eq('farm_id', activeFarmId).order('name', { ascending: true });
+      if (error) throw error;
+      ui.cropList.replaceChildren();
+      if (!(data || []).length) {
+        const empty = document.createElement('p');
+        empty.className = 'crop-empty';
+        empty.textContent = 'Культур пока нет. Добавьте первую ниже.';
+        ui.cropList.append(empty);
+        return;
+      }
+      for (const crop of data) {
+        const item = document.createElement('article');
+        item.className = 'crop-item';
+        const title = document.createElement('strong');
+        title.textContent = crop.name || 'Без названия';
+        const code = document.createElement('span');
+        code.textContent = crop.code || 'Без кода';
+        item.append(title, code);
+        ui.cropList.append(item);
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки справочника культур:', error);
+      const item = document.createElement('p');
+      item.className = 'crop-empty crop-error';
+      item.textContent = `Не удалось загрузить культуры: ${formatSupabaseError(error)}`;
+      ui.cropList.replaceChildren(item);
+      showCropMessage(isRlsError(error)
+        ? 'Чтение справочника запрещено RLS. Проверьте членство в хозяйстве.'
+        : formatSupabaseError(error), 'error');
+    }
+  }
+
+  async function openCropDirectory() {
+    if (!authenticatedUser || !activeFarmId || !isReady || !supabase) {
+      setStatus('Сначала войдите и выберите хозяйство.', 'info');
+      return;
+    }
+    ui.cropModal.hidden = false;
+    ui.cropForm.reset();
+    setDirectoryView('crops');
+    showCropMessage('');
+    await loadCropDirectory();
+    window.setTimeout(() => ui.cropName.focus(), 0);
+  }
+
+  async function saveCrop(event) {
+    event.preventDefault();
+    if (!ui.cropForm.reportValidity() || !supabase || !activeFarmId) return;
+    ui.cropSave.disabled = true;
+    showCropMessage('Сохраняем культуру…');
+    try {
+      const name = ui.cropName.value.trim();
+      const code = ui.cropCode.value.trim().toUpperCase() || null;
+      const { error } = await supabase.from('crops').insert({
+        farm_id: activeFarmId, name, code
+      });
+      if (error) throw error;
+      ui.cropForm.reset();
+      showCropMessage('Культура добавлена.', 'success');
+      await loadCropDirectory();
+    } catch (error) {
+      console.error('Ошибка добавления культуры:', error);
+      const duplicate = error?.code === '23505';
+      showCropMessage(duplicate
+        ? 'Такая культура или код уже существуют в этом хозяйстве.'
+        : (isRlsError(error)
+          ? 'Нет права добавлять культуры. Нужна соответствующая роль в хозяйстве.'
+          : formatSupabaseError(error)), 'error');
+    } finally {
+      ui.cropSave.disabled = false;
+    }
+  }
+
+  function setDirectoryView(view) {
+    const technologies = view === 'technologies';
+    ui.cropPanel.hidden = technologies;
+    ui.technologyPanel.hidden = !technologies;
+    ui.cropTab.classList.toggle('is-active', !technologies);
+    ui.technologyTab.classList.toggle('is-active', technologies);
+    ui.cropTab.setAttribute('aria-selected', String(!technologies));
+    ui.technologyTab.setAttribute('aria-selected', String(technologies));
+    ui.cropTitle.textContent = technologies ? 'Технологии хозяйства' : 'Культуры хозяйства';
+    if (technologies) void loadTechnologyDirectory();
+  }
+
+  function showTechnologyMessage(message, kind = 'info') {
+    ui.technologyMessage.textContent = message;
+    ui.technologyMessage.className = `crop-message is-${kind}`;
+    ui.technologyMessage.hidden = !message;
+  }
+
+  function appendText(parent, tag, className, value) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    element.textContent = value;
+    parent.append(element);
+    return element;
+  }
+
+  function formatTechnologyRate(value, unit) {
+    if (value === null || value === undefined || value === '') return '—';
+    const numeric = Number(value);
+    const formatted = Number.isFinite(numeric)
+      ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(numeric)
+      : String(value);
+    return unit ? `${formatted} ${unit}` : formatted;
+  }
+
+  async function loadTechnologyDirectory() {
+    if (!supabase || !activeFarmId || !authenticatedUser) return;
+    const farmId = activeFarmId;
+    const requestId = ++technologyListRequest;
+    technologyRows = [];
+    ui.technologyDetails.hidden = true;
+    ui.technologyList.hidden = false;
+    ui.technologyList.replaceChildren();
+    showTechnologyMessage('Загружаем технологии…');
+    const loading = document.createElement('p');
+    loading.className = 'crop-empty';
+    loading.textContent = 'Загружаем технологии…';
+    ui.technologyList.append(loading);
+    try {
+      const { data, error } = await supabase.from('cultivation_technologies')
+        .select('id,farm_id,crop_id,name,description,year,is_active')
+        .eq('farm_id', farmId)
+        .order('year', { ascending: false, nullsFirst: false })
+        .order('name', { ascending: true });
+      if (error) throw error;
+      const technologies = data || [];
+      const cropIds = [...new Set(technologies.map((item) => item.crop_id).filter(Boolean))];
+      const cropMap = new Map();
+      const operationCounts = new Map();
+      if (cropIds.length) {
+        const [cropsResult, operationsResult] = await Promise.all([
+          supabase.from('crops').select('id,name').in('id', cropIds),
+          supabase.from('technology_operations').select('technology_id').in('technology_id', technologies.map((item) => item.id))
+        ]);
+        if (cropsResult.error) throw cropsResult.error;
+        if (operationsResult.error) throw operationsResult.error;
+        (cropsResult.data || []).forEach((crop) => cropMap.set(String(crop.id), crop.name));
+        (operationsResult.data || []).forEach((operation) => {
+          const key = String(operation.technology_id);
+          operationCounts.set(key, (operationCounts.get(key) || 0) + 1);
+        });
+      }
+      if (requestId !== technologyListRequest || activeFarmId !== farmId) return;
+      technologyRows = technologies.map((item) => ({
+        ...item,
+        cropName: cropMap.get(String(item.crop_id)) || 'Культура не найдена',
+        operationCount: operationCounts.get(String(item.id)) || 0
+      }));
+      ui.technologyList.replaceChildren();
+      showTechnologyMessage('');
+      if (!technologyRows.length) {
+        const empty = document.createElement('p');
+        empty.className = 'crop-empty';
+        empty.textContent = 'Технологий пока нет. Шаблоны появятся после импорта проверенной технологической карты.';
+        ui.technologyList.append(empty);
+        return;
+      }
+      technologyRows.forEach((technology) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'technology-row';
+        row.dataset.technologyId = technology.id;
+        const title = document.createElement('span');
+        title.className = 'technology-row-title';
+        const crop = document.createElement('strong');
+        crop.textContent = technology.cropName;
+        const name = document.createElement('span');
+        name.textContent = technology.name;
+        title.append(crop, name);
+        const year = appendText(row, 'span', 'technology-year', technology.year ? String(technology.year) : 'Без года');
+        const status = appendText(row, 'span', `technology-status ${technology.is_active ? 'is-active' : ''}`, technology.is_active ? 'Активна' : 'Архивная');
+        const count = appendText(row, 'span', 'technology-operation-count',
+          `${technology.operationCount} ${pluralize(technology.operationCount, 'операция', 'операции', 'операций')}`);
+        row.replaceChildren(title, year, status, count);
+        ui.technologyList.append(row);
+      });
+    } catch (error) {
+      if (requestId !== technologyListRequest || activeFarmId !== farmId) return;
+      console.error('Ошибка загрузки технологий:', error);
+      ui.technologyList.replaceChildren();
+      const message = isRlsError(error)
+        ? 'Чтение технологий запрещено RLS. Проверьте применение миграции и доступ участника хозяйства.'
+        : `Не удалось загрузить технологии: ${formatSupabaseError(error)}`;
+      showTechnologyMessage(message, 'error');
+    }
+  }
+
+  async function openTechnologyDetails(technologyId) {
+    const technology = technologyRows.find((item) => String(item.id) === String(technologyId));
+    if (!technology) return;
+    const requestId = ++technologyDetailsRequest;
+    const farmId = activeFarmId;
+    ui.technologyList.hidden = true;
+    ui.technologyDetails.hidden = false;
+    ui.technologyTitle.textContent = `${technology.cropName} — ${technology.name}${technology.year ? ` — ${technology.year}` : ''}`;
+    ui.technologyDescription.textContent = technology.description || '';
+    ui.technologyDescription.hidden = !technology.description;
+    ui.technologyOperations.replaceChildren();
+    showTechnologyMessage('');
+    appendText(ui.technologyOperations, 'p', 'crop-empty', 'Загружаем операции…');
+    try {
+      const { data, error } = await supabase.from('technology_operations')
+        .select('id,operation_no,name,stage,timing_type,timing_value,application_method,crop_area_percent,working_solution_rate,working_solution_unit,condition_text,notes')
+        .eq('technology_id', technology.id)
+        .order('operation_no', { ascending: true });
+      if (error) throw error;
+      const operations = data || [];
+      let productsByOperation = new Map();
+      if (operations.length) {
+        const { data: products, error: productsError } = await supabase.from('technology_operation_products')
+          .select('id,technology_operation_id,product_name,rate,rate_unit,sequence_no,notes')
+          .in('technology_operation_id', operations.map((item) => item.id))
+          .order('sequence_no', { ascending: true });
+        if (productsError) throw productsError;
+        productsByOperation = new Map();
+        (products || []).forEach((product) => {
+          const key = String(product.technology_operation_id);
+          if (!productsByOperation.has(key)) productsByOperation.set(key, []);
+          productsByOperation.get(key).push(product);
+        });
+      }
+      if (requestId !== technologyDetailsRequest || activeFarmId !== farmId) return;
+      ui.technologyOperations.replaceChildren();
+      if (!operations.length) {
+        appendText(ui.technologyOperations, 'p', 'crop-empty', 'Операций в этой технологии пока нет.');
+        return;
+      }
+      operations.forEach((operation) => {
+        const card = document.createElement('article');
+        card.className = 'technology-operation';
+        const heading = document.createElement('div');
+        heading.className = 'technology-operation-heading';
+        const number = Number(operation.operation_no);
+        const label = Number.isFinite(number)
+          ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(number)
+          : String(operation.operation_no);
+        appendText(heading, 'span', 'technology-operation-no', `№ ${label}`);
+        appendText(heading, 'strong', '', operation.name);
+        card.append(heading);
+        const meta = document.createElement('div');
+        meta.className = 'technology-operation-meta';
+        if (operation.stage) appendText(meta, 'span', '', `Фаза: ${operation.stage}`);
+        const cropAreaPercent = Number(operation.crop_area_percent);
+        const formattedCropAreaPercent = Number.isFinite(cropAreaPercent)
+          ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(cropAreaPercent)
+          : '—';
+        appendText(meta, 'span', '', `Р-Ж: ${formattedCropAreaPercent}% площади культуры`);
+        const timing = [operation.timing_value, operation.condition_text].filter(Boolean).join(' · ');
+        if (timing) appendText(meta, 'span', '', `Срок: ${timing}`);
+        if (operation.application_method) appendText(meta, 'span', '', `Способ: ${operation.application_method}`);
+        if (operation.working_solution_rate !== null) {
+          appendText(meta, 'span', '', `Рабочий раствор: ${formatTechnologyRate(operation.working_solution_rate, operation.working_solution_unit)}`);
+        }
+        if (meta.childElementCount) card.append(meta);
+        const products = productsByOperation.get(String(operation.id)) || [];
+        if (products.length) {
+          const list = document.createElement('ul');
+          list.className = 'technology-products';
+          products.forEach((product) => {
+            const line = document.createElement('li');
+            line.textContent = `${product.product_name} — ${formatTechnologyRate(product.rate, product.rate_unit)}`;
+            if (product.notes) line.title = product.notes;
+            list.append(line);
+          });
+          card.append(list);
+        }
+        const notes = [operation.notes].filter(Boolean).join(' · ');
+        if (notes) appendText(card, 'p', 'technology-operation-notes', notes);
+        ui.technologyOperations.append(card);
+      });
+    } catch (error) {
+      if (requestId !== technologyDetailsRequest || activeFarmId !== farmId) return;
+      console.error('Ошибка загрузки операций технологии:', error);
+      ui.technologyOperations.replaceChildren();
+      showTechnologyMessage(isRlsError(error)
+        ? 'Чтение операций запрещено RLS. Проверьте доступ к технологии в этом хозяйстве.'
+        : `Не удалось загрузить операции: ${formatSupabaseError(error)}`, 'error');
+    }
+  }
+
+  function showSeasonFormMessage(message, kind = 'info') {
+    ui.seasonFormMessage.textContent = message;
+    ui.seasonFormMessage.className = `season-form-message is-${kind}`;
+    ui.seasonFormMessage.hidden = !message;
+  }
+
+  function seasonStatusLabel(status) {
+    return ({ planned: 'Запланирован', active: 'Активен', completed: 'Завершён', cancelled: 'Отменён' })[status] || status || 'Не указан';
+  }
+
+  function referenceName(row) {
+    return row?.name || row?.crop_name || row?.variety_name || row?.title || row?.label || '';
+  }
+
+  function showSeasonReadError(error, table) {
+    const detail = formatSupabaseError(error);
+    const policy = isRlsError(error)
+      ? ` Проверьте наличие членства в хозяйстве и RLS-policy SELECT для роли authenticated на public.${table}.`
+      : '';
+    ui.seasonList.replaceChildren();
+    const item = document.createElement('p');
+    item.className = 'season-empty season-error';
+    item.textContent = `Не удалось загрузить сезоны: ${detail}.${policy}`;
+    ui.seasonList.append(item);
+    setStatus(`Ошибка чтения public.${table}: ${detail}.${policy}`, 'error', false);
+  }
+
+  async function loadSeasonHistory(fieldId) {
+    if (!supabase || !fieldId) return false;
+    if (!await requireUser()) return false;
+    const requestId = ++seasonHistoryRequest;
+    ui.seasonLoading.hidden = false;
+    ui.seasonList.replaceChildren();
+    try {
+      const seasonResult = await supabase.from('field_seasons').select('*').eq('field_id', fieldId)
+        .order('season_year', { ascending: false }).order('season_no', { ascending: true });
+      if (seasonResult.error) throw Object.assign(seasonResult.error, { tableName: 'field_seasons' });
+      const seasons = seasonResult.data || [];
+      if (!seasons.length) {
+        if (requestId !== seasonHistoryRequest || selectedId !== fieldId) return false;
+        const empty = document.createElement('p');
+        empty.className = 'season-empty';
+        empty.textContent = 'Сезонов пока нет. Если список неожиданно пуст, проверьте SELECT-политику RLS для field_seasons.';
+        ui.seasonList.replaceChildren(empty);
+        return true;
+      }
+
+      const seasonIds = seasons.map((season) => season.id);
+      const cropsResult = await supabase.from('season_crops').select('*').in('season_id', seasonIds)
+        .order('sequence_no', { ascending: true });
+      if (cropsResult.error) throw Object.assign(cropsResult.error, { tableName: 'season_crops' });
+      const cropRows = cropsResult.data || [];
+      const cropIds = [...new Set(cropRows.map((row) => row.planned_crop_id).filter(Boolean))];
+      const varietyIds = [...new Set(cropRows.map((row) => row.planned_variety_id).filter(Boolean))];
+      let cropLookup = new Map();
+      let varietyLookup = new Map();
+      if (cropIds.length) {
+        const result = await supabase.from('crops').select('*').in('id', cropIds);
+        if (result.error) throw Object.assign(result.error, { tableName: 'crops' });
+        cropLookup = new Map((result.data || []).map((row) => [String(row.id), referenceName(row)]));
+      }
+      if (varietyIds.length) {
+        const result = await supabase.from('varieties').select('*').in('id', varietyIds);
+        if (result.error) throw Object.assign(result.error, { tableName: 'varieties' });
+        varietyLookup = new Map((result.data || []).map((row) => [String(row.id), referenceName(row)]));
+      }
+      if (requestId !== seasonHistoryRequest || selectedId !== fieldId) return false;
+
+      const template = $('#season-item-template');
+      const fragment = document.createDocumentFragment();
+      for (const season of seasons) {
+        const entries = cropRows.filter((row) => String(row.season_id) === String(season.id));
+        for (const entry of entries.length ? entries : [null]) {
+          const item = template.content.firstElementChild.cloneNode(true);
+          item.querySelector('[data-season-year]').textContent = season.season_year ?? '—';
+          item.querySelector('[data-season-status]').textContent = seasonStatusLabel(season.status);
+          item.querySelector('[data-season-crop]').textContent = entry ? (cropLookup.get(String(entry.planned_crop_id)) || '—') : '—';
+          item.querySelector('[data-season-variety]').textContent = entry?.planned_variety_id ? (varietyLookup.get(String(entry.planned_variety_id)) || '—') : '—';
+          item.querySelector('[data-season-planned-yield]').textContent = entry?.planned_yield_c_ha ?? '—';
+          item.querySelector('[data-season-actual-yield]').textContent = entry?.actual_yield_c_ha ?? '—';
+          fragment.append(item);
+        }
+      }
+      ui.seasonList.replaceChildren(fragment);
+      return true;
+    } catch (error) {
+      console.error('Ошибка загрузки истории сезонов:', error);
+      if (requestId === seasonHistoryRequest && selectedId === fieldId) showSeasonReadError(error, error.tableName || 'field_seasons');
+      return false;
+    } finally {
+      if (requestId === seasonHistoryRequest) ui.seasonLoading.hidden = true;
+    }
+  }
+
+  async function loadSeasonCrops() {
+    ui.seasonCrop.replaceChildren(new Option('Загрузка культур…', ''));
+    ui.seasonCrop.disabled = true;
+    const { data, error } = await supabase.from('crops').select('*').eq('farm_id', activeFarmId);
+    if (error) throw Object.assign(error, { tableName: 'crops' });
+    seasonCrops = (data || []).filter((row) => row.is_active !== false)
+      .sort((a, b) => referenceName(a).localeCompare(referenceName(b), 'ru'));
+    ui.seasonCrop.replaceChildren(new Option(seasonCrops.length ? 'Выберите культуру' : 'Нет доступных культур', ''));
+    for (const crop of seasonCrops) {
+      const name = referenceName(crop);
+      if (!name) continue;
+      ui.seasonCrop.add(new Option(name, String(crop.id)));
+    }
+    ui.seasonCrop.disabled = seasonCrops.length === 0;
+    if (!seasonCrops.length) {
+      showSeasonFormMessage('Список культур пуст или чтение ограничено RLS. Проверьте доступ к хозяйству и справочник public.crops.', 'error');
+    } else {
+      showSeasonFormMessage('');
+    }
+  }
+
+  async function loadSeasonVarieties(cropId) {
+    seasonVarieties = [];
+    ui.seasonVariety.disabled = true;
+    ui.seasonVariety.replaceChildren(new Option('Загрузка сортов…', ''));
+    if (!cropId) {
+      ui.seasonVariety.replaceChildren(new Option('Сначала выберите культуру', ''));
+      return;
+    }
+    const { data, error } = await supabase.from('varieties').select('*').eq('farm_id', activeFarmId).eq('crop_id', cropId);
+    if (error) throw Object.assign(error, { tableName: 'varieties' });
+    seasonVarieties = (data || []).filter((row) => row.is_active !== false)
+      .sort((a, b) => referenceName(a).localeCompare(referenceName(b), 'ru'));
+    ui.seasonVariety.replaceChildren(new Option('Без указания сорта / гибрида', ''));
+    for (const variety of seasonVarieties) {
+      const name = referenceName(variety);
+      if (name) ui.seasonVariety.add(new Option(name, String(variety.id)));
+    }
+    ui.seasonVariety.disabled = false;
+  }
+
+  async function openSeasonForm() {
+    if (!selectedId || !fields.has(selectedId) || !isReady || !supabase) return;
+    if (!await requireUser()) return;
+    ui.seasonForm.reset();
+    ui.seasonYear.value = String(new Date().getFullYear());
+    ui.seasonStatus.value = 'planned';
+    seasonLookupBlocked = false;
+    ui.seasonModal.hidden = false;
+    ui.seasonSave.disabled = true;
+    showSeasonFormMessage('');
+    try {
+      await loadSeasonCrops();
+      ui.seasonSave.disabled = seasonCrops.length === 0 || !isReady;
+      ui.seasonYear.focus();
+    } catch (error) {
+      console.error('Ошибка загрузки культур:', error);
+      const detail = formatSupabaseError(error);
+      const policy = isRlsError(error) ? ' Проверьте членство и RLS-policy SELECT для authenticated на public.crops.' : '';
+      showSeasonFormMessage(`Не удалось загрузить культуры: ${detail}.${policy}`, 'error');
+      setStatus(`Ошибка чтения public.crops: ${detail}.${policy}`, 'error', false);
+      ui.seasonCrop.replaceChildren(new Option('Культуры недоступны', ''));
+      ui.seasonSave.disabled = true;
+    }
+  }
+
+  async function saveSeason(event) {
+    event.preventDefault();
+    if (seasonSaving || !ui.seasonForm.reportValidity()) return;
+    const fieldId = selectedId;
+    if (!fieldId || !fields.has(fieldId) || !isReady || !supabase) return;
+    const cropId = ui.seasonCrop.value;
+    const crop = seasonCrops.find((row) => String(row.id) === cropId);
+    if (!crop) {
+      showSeasonFormMessage('Выберите культуру из справочника.', 'error');
+      return;
+    }
+    const varietyId = ui.seasonVariety.value || null;
+    if (seasonLookupBlocked) {
+      showSeasonFormMessage('Сохранение остановлено: справочник сортов недоступен из-за ошибки доступа.', 'error');
+      return;
+    }
+    if (varietyId && !seasonVarieties.some((row) => String(row.id) === varietyId)) {
+      showSeasonFormMessage('Выбранный сорт не относится к выбранной культуре. Загрузите список сортов повторно.', 'error');
+      return;
+    }
+
+    const year = Number(ui.seasonYear.value);
+    const status = ui.seasonStatus.value;
+    seasonSaving = true;
+    ui.seasonSave.disabled = true;
+    showSeasonFormMessage('Проверяем сезон и сохраняем…');
+    setStatus('Сохраняем сезон в Supabase…', 'loading');
+    let operation = 'SELECT';
+    try {
+      const user = await requireUser();
+      if (!user) return;
+      const duplicateResult = await supabase.from('field_seasons').select('id').eq('field_id', fieldId)
+        .eq('season_year', year).limit(1);
+      if (duplicateResult.error) throw Object.assign(duplicateResult.error, { tableName: 'field_seasons' });
+      if (duplicateResult.data?.length) {
+        showSeasonFormMessage(`Для этого поля сезон ${year} уже существует.`, 'error');
+        setStatus(`Сезон ${year} для этого поля уже существует.`, 'error');
+        return;
+      }
+
+      operation = 'RPC';
+      const { data: seasonId, error } = await supabase.rpc('create_field_season', {
+        p_field_id: fieldId,
+        p_season_year: year,
+        p_season_no: 1,
+        p_status: status,
+        p_planned_crop_id: crop.id,
+        p_planned_variety_id: varietyId,
+        p_planned_yield_c_ha: ui.seasonPlannedYield.value === '' ? null : Number(ui.seasonPlannedYield.value),
+        p_actual_yield_c_ha: ui.seasonActualYield.value === '' ? null : Number(ui.seasonActualYield.value)
+      });
+      if (error) throw Object.assign(error, { tableName: 'create_field_season' });
+      if (!seasonId) throw new Error('RPC не вернула id созданного сезона.');
+
+      ui.seasonModal.hidden = true;
+      const refreshed = await loadSeasonHistory(fieldId);
+      if (refreshed) {
+        setStatus('Сезон сохранён и история обновлена.', 'success');
+        window.setTimeout(() => { if (ui.status.classList.contains('is-success')) ui.status.hidden = true; }, 4000);
+      }
+    } catch (error) {
+      console.error('Ошибка сохранения сезона:', error);
+      const detail = formatSupabaseError(error);
+      if (error.code === '23505') {
+        const message = `Сезон ${year} для этого поля уже существует (ограничение уникальности).`;
+        showSeasonFormMessage(message, 'error');
+        setStatus(message, 'error');
+        return;
+      }
+      const table = error.tableName || 'field_seasons';
+      const policy = isRlsError(error)
+        ? (operation === 'RPC' ? ' Проверьте GRANT EXECUTE для authenticated на RPC и членство в хозяйстве.' : ` Проверьте членство и RLS-policy ${operation} для authenticated на public.${table}.`)
+        : '';
+      const action = operation === 'SELECT' ? 'прочитать' : 'записать';
+      showSeasonFormMessage(`Не удалось ${action} ${table === 'create_field_season' ? 'сезон через RPC' : `public.${table}`}: ${detail}.${policy}`, 'error');
+      setStatus(`Ошибка ${operation} ${table === 'create_field_season' ? 'public.create_field_season' : `public.${table}`}: ${detail}.${policy}`, 'error', false);
+    } finally {
+      seasonSaving = false;
+      ui.seasonSave.disabled = seasonCrops.length === 0 || !isReady || seasonLookupBlocked;
+    }
+  }
+
+  function rowToFeature(row) {
+    let geometry = row.geometry;
+    if (typeof geometry === 'string') geometry = JSON.parse(geometry);
+    if (geometry?.type === 'Feature') geometry = geometry.geometry;
+    if (geometry?.type !== 'Polygon' || !Array.isArray(geometry.coordinates)) {
+      throw new Error(`У поля «${row.name || row.id}» отсутствует корректная GeoJSON Polygon геометрия.`);
+    }
+    return createFeature(geometry, {
+      id: String(row.id), farmId: row.farm_id || null, name: row.name || '', crop: row.crop || '', variety: row.variety || '',
+      year: row.year ?? '', yield: row.yield_c_ha ?? '', note: row.notes || ''
+    });
+  }
+
+  function featureToRow(feature, properties = feature.properties) {
+    return {
+      farm_id: properties.farmId || activeFarmId,
+      name: properties.name,
+      area_ha: areaHectares(feature.geometry),
+      crop: properties.crop || null,
+      variety: properties.variety || null,
+      year: properties.year === '' || properties.year == null ? null : Number(properties.year),
+      yield_c_ha: properties.yield === '' || properties.yield == null ? null : Number(properties.yield),
+      notes: properties.note || null,
+      geometry: feature.geometry
+    };
+  }
+
+  function renderFeature(feature) {
+    const id = String(feature.properties.id);
+    const layer = makeLayer(feature, id).addTo(fieldsLayer);
+    fields.set(id, { id, feature, layer });
+  }
+
+  function clearRenderedFields() {
+    fieldsLayer.clearLayers();
+    fields.clear();
+    selectedId = null;
+  }
+
+  function openFieldsList() {
+    ui.fieldsListView.hidden = false;
+    ui.fieldsDetailsView.hidden = true;
+    renderFieldsList();
+    window.setTimeout(() => ui.fieldsSearch.focus(), 0);
+  }
+
+  function openFieldDetails() {
+    ui.fieldsListView.hidden = true;
+    ui.fieldsDetailsView.hidden = false;
+  }
+
+  function updateFilterOptions(select, label, values) {
+    const current = select.value;
+    const unique = [...new Set(values.filter((value) => value !== '' && value != null).map(String))];
+    unique.sort((a, b) => label === 'год' ? Number(b) - Number(a) : a.localeCompare(b, 'ru'));
+    select.replaceChildren(new Option(`Все ${label === 'культура' ? 'культуры' : 'годы'}`, ''));
+    unique.forEach((value) => select.add(new Option(value, value)));
+    if (unique.includes(current)) select.value = current;
+  }
+
+  function renderFieldsList() {
+    if (!ui.fieldsList) return;
+    const values = [...fields.values()];
+    updateFilterOptions(ui.cropFilter, 'культура', values.map(({ feature }) => feature.properties.crop));
+    updateFilterOptions(ui.yearFilter, 'год', values.map(({ feature }) => feature.properties.year));
+    const search = ui.fieldsSearch.value.trim().toLocaleLowerCase('ru');
+    const crop = ui.cropFilter.value;
+    const year = ui.yearFilter.value;
+    const visible = values.filter(({ feature }) => {
+      const props = feature.properties;
+      return (!search || String(props.name || '').toLocaleLowerCase('ru').includes(search))
+        && (!crop || String(props.crop || '') === crop)
+        && (!year || String(props.year ?? '') === year);
+    });
+    ui.fieldsList.replaceChildren();
+    if (!visible.length) {
+      const empty = document.createElement('div');
+      empty.className = 'fields-list-empty';
+      empty.textContent = values.length ? 'По заданным условиям поля не найдены.' : 'Поля пока не добавлены.';
+      ui.fieldsList.append(empty);
+    } else {
+      visible.forEach(({ id, feature }) => {
+        const props = feature.properties;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `field-list-item${id === selectedId ? ' is-selected' : ''}`;
+        button.setAttribute('role', 'listitem');
+        button.setAttribute('aria-current', id === selectedId ? 'true' : 'false');
+        const top = document.createElement('span');
+        top.className = 'field-list-item-top';
+        const name = document.createElement('strong');
+        name.textContent = props.name || 'Без названия';
+        const area = document.createElement('span');
+        area.className = 'field-list-area';
+        area.textContent = `${formatArea(areaHectares(feature.geometry))} га`;
+        top.append(name, area);
+        const cropLabel = document.createElement('span');
+        cropLabel.className = 'field-list-crop';
+        cropLabel.textContent = props.crop || 'Культура не указана';
+        button.append(top, cropLabel);
+        button.addEventListener('click', () => {
+          selectField(id);
+          const bounds = fields.get(id)?.layer.getBounds();
+          if (bounds?.isValid()) map.fitBounds(bounds.pad(0.18), { maxZoom: 16, animate: true });
+          openFieldDetails();
+        });
+        ui.fieldsList.append(button);
+      });
+    }
+    const totalArea = visible.reduce((total, { feature }) => total + areaHectares(feature.geometry), 0);
+    ui.fieldsListSummary.textContent = `${visible.length} ${pluralize(visible.length, 'поле', 'поля', 'полей')} · ${formatArea(totalArea)} га`;
+  }
+
+  function pluralize(count, one, few, many) {
+    const n = Math.abs(count) % 100;
+    const last = n % 10;
+    if (n > 10 && n < 20) return many;
+    if (last > 1 && last < 5) return few;
+    if (last === 1) return one;
+    return many;
+  }
+
+  function setDataActionsEnabled(enabled) {
+    isReady = enabled;
+    ui.add.disabled = !enabled;
+    ui.emptyAdd.disabled = !enabled;
+    ui.myFields.disabled = !enabled;
+    if (ui.cropDirectory) ui.cropDirectory.disabled = false;
+    ui.seasonAdd.disabled = !enabled || !selectedId;
+  }
+  
+
+  async function loadAccessibleFarms(user = authenticatedUser, preferredFarmId = null) {
+    if (!user?.id) throw new Error('Не удалось определить текущего пользователя Supabase Auth.');
+    const [membersResult, farmsResult] = await Promise.all([
+      supabase.from('farm_members').select('farm_id,role').eq('user_id', user.id),
+      supabase.from('farms').select('id,name').order('name', { ascending: true })
+    ]);
+    if (membersResult.error) throw Object.assign(membersResult.error, { tableName: 'farm_members' });
+    if (farmsResult.error) throw Object.assign(farmsResult.error, { tableName: 'farms' });
+
+    farmRoles = new Map((membersResult.data || []).map((membership) => [String(membership.farm_id), membership.role]));
+    farms = (farmsResult.data || []).filter((farm) => farmRoles.has(String(farm.id)));
+    if (farmRoles.size && !farms.length) {
+      throw new Error('У пользователя найдены записи farm_members, но ни одно хозяйство не доступно через RLS.');
+    }
+    ui.farmSelector.replaceChildren(new Option(farms.length ? 'Выберите хозяйство' : 'Нет доступных хозяйств', ''));
+    farms.forEach((farm) => ui.farmSelector.add(new Option(farm.name, String(farm.id))));
+    if (!farms.length) {
+      activeFarmId = null;
+      ui.farmSelector.disabled = true;
+      ui.farmRole.hidden = true;
+      clearRenderedFields();
+      renderFieldsList();
+      setDataActionsEnabled(false);
+      ui.emptyState.hidden = false;
+      ui.form.hidden = true;
+      setStatus('У вас пока нет хозяйства. Создайте хозяйство, чтобы начать работу.', 'info');
+      showNoFarmState();
+      return false;
+    }
+    const selected = preferredFarmId && farms.some((farm) => String(farm.id) === String(preferredFarmId))
+      ? String(preferredFarmId)
+      : farms.some((farm) => String(farm.id) === String(activeFarmId)) ? activeFarmId : String(farms[0].id);
+    activeFarmId = String(selected);
+    ui.farmSelector.value = activeFarmId;
+    ui.farmSelector.disabled = false;
+    ui.cropDirectory.disabled = false;
+    updateSelectedFarmRole();
+    ui.authModal.hidden = true;
+    return true;
+  }
+
+  async function loadFieldsFromSupabase() {
+    if (!supabase || loadInProgress) return;
+    loadInProgress = true;
+    let requestUserId = null;
+    try {
+      const user = await requireUser();
+      if (!user) return;
+      requestUserId = user.id;
+      setDataActionsEnabled(false);
+      setStatus('Загружаем хозяйства и поля…', 'loading');
+      if (!await loadAccessibleFarms(user)) return;
+      const requestedFarmId = activeFarmId;
+      ui.farmSelector.disabled = true;
+      const { data, error } = await supabase.from(TABLE).select(SELECT_COLUMNS).eq('farm_id', requestedFarmId).order('created_at', { ascending: false });
+      if (error) throw error;
+      if (authenticatedUser?.id !== requestUserId || activeFarmId !== requestedFarmId) return;
+      clearRenderedFields();
+      const invalidRows = [];
+      for (const row of data || []) {
+        try { renderFeature(rowToFeature(row)); }
+        catch (error) { invalidRows.push(error.message); }
+      }
+      renderFieldsList();
+      setDataActionsEnabled(true);
+      if (invalidRows.length) {
+        setStatus(`Загружено ${fields.size} полей. Пропущено записей с ошибочной геометрией: ${invalidRows.length}. ${invalidRows[0]}`, 'error', true);
+      } else {
+        setStatus(fields.size ? `Загружено полей: ${fields.size}` : 'Подключено к Supabase. Полей пока нет.', 'success');
+        window.setTimeout(() => { if (ui.status.classList.contains('is-success')) ui.status.hidden = true; }, 4500);
+      }
+      ui.emptyState.hidden = false;
+      ui.form.hidden = true;
+    } catch (error) {
+      if (requestUserId && authenticatedUser?.id !== requestUserId) return;
+      console.error('Ошибка загрузки полей Supabase:', error);
+      setDataActionsEnabled(false);
+      const detail = formatSupabaseError(error);
+      const policy = isRlsError(error) ? ' Проверьте членство в выбранном хозяйстве и RLS-policy SELECT для authenticated на public.fields.' : ' Проверьте сессию, доступ к Data API и RLS-политики public.fields.';
+      setStatus(`Не удалось загрузить поля: ${detail}.${policy}`, 'error', true);
       if (authenticatedUser) showAuthLoading(`Не удалось загрузить данные: ${detail}.${policy}`, true);
     } finally {
       ui.farmSelector.disabled = farms.length === 0;
@@ -769,4 +1536,3 @@ Total output lines: 1539
     getLastAuthEvent: () => lastAuthEvent
   });
 })();
-
