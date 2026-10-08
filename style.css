@@ -156,3 +156,52 @@
 .technology-operation-notes{margin:7px 0 0;color:#7d6750;font-size:9px;line-height:1.5}
 @media(max-width:520px){.technology-row{grid-template-columns:minmax(0,1fr) auto;gap:6px}.technology-row-title{grid-row:span 2}.technology-row-title strong{font-size:9px}.technology-row-title>span{font-size:8px}.technology-year,.technology-status,.technology-operation-count{justify-self:end}.technology-list{max-height:58dvh}}
 
+
+/* Панель сезона хозяйства. */
+.season-dashboard-modal{position:fixed;z-index:1450;inset:0;display:grid;place-items:center;padding:18px;background:#17251db3}
+.season-dashboard-modal[hidden]{display:none}
+.season-dashboard-dialog{width:min(100%,760px);max-height:min(90dvh,820px);overflow:auto;padding:22px;border:1px solid #e5e9e1;border-radius:14px;background:#fff;box-shadow:0 20px 65px #14231a45}
+.season-dashboard-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+.season-dashboard-heading h2{margin:0;color:#344235;font:700 18px Manrope,sans-serif}
+.season-dashboard-controls{display:flex;align-items:end;gap:8px;padding:12px;border:1px solid #e8ece5;border-radius:9px;background:#fbfcfa}
+.season-dashboard-controls .form-field{flex:1;margin:0}
+.season-dashboard-controls select{display:block;width:100%;height:38px;margin-top:5px;padding:0 10px;border:1px solid #e1e6de;border-radius:7px;background:#fff;color:#344034;font:500 11px 'DM Sans',sans-serif}
+.season-dashboard-refresh{height:38px;padding:0 14px;border-radius:7px;font:600 10px 'DM Sans',sans-serif;cursor:pointer}
+.season-dashboard-message{margin:12px 0;padding:9px 10px;border:1px solid #e4e9e1;border-radius:8px;background:#f7f9f5;color:#566254;font-size:10px;line-height:1.5}
+.season-dashboard-message[hidden]{display:none}
+.season-dashboard-message.is-error{border-color:#efd4cf;background:#fff9f8;color:#a14339}
+.season-dashboard-message.is-info{border-color:#d4e5d2;background:#f7fbf6;color:#356b3f}
+.season-dashboard-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+.season-dashboard-stat{padding:12px;border:1px solid #e8ece5;border-radius:9px;background:#fbfcfa}
+.season-dashboard-stat strong{display:block;color:#344235;font:700 17px Manrope,sans-serif}
+.season-dashboard-stat span{display:block;margin-top:3px;color:#7b8579;font-size:9px}
+.season-dashboard-crops{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:18px}
+.season-dashboard-crop{padding:11px;border:1px solid #e8ece5;border-radius:9px;background:#fff}
+.season-dashboard-crop strong{display:block;overflow:hidden;color:#344235;font:700 11px Manrope,sans-serif;text-overflow:ellipsis;white-space:nowrap}
+.season-dashboard-crop>span{display:block;margin-top:4px;color:#788276;font-size:9px}
+.season-dashboard-crop small{display:block;margin-top:6px;color:#899187;font-size:8px}
+.season-dashboard-progress{height:5px;margin-top:9px;overflow:hidden;border-radius:99px;background:#edf1eb}
+.season-dashboard-progress span{display:block;height:100%;border-radius:99px;background:#6b9a70}
+.season-dashboard-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0 0 8px}
+.season-dashboard-section-heading h3{margin:0;color:#344235;font:700 12px Manrope,sans-serif}
+.season-dashboard-section-heading span{color:#929a90;font-size:9px}
+.season-dashboard-field-list{display:grid;gap:6px}
+.season-dashboard-field{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px;border:1px solid #e8ece5;border-radius:8px;background:#fbfcfa}
+.season-dashboard-field-info{min-width:0;display:grid;gap:3px}
+.season-dashboard-field-info strong{overflow:hidden;color:#344235;font:700 10px Manrope,sans-serif;text-overflow:ellipsis;white-space:nowrap}
+.season-dashboard-field-info span,.season-dashboard-field-info small{color:#788276;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.season-dashboard-field-info small{color:#4d7451}
+.season-dashboard-open{flex:none;min-height:29px;padding:0 9px;border:1px solid #dfe6dc;border-radius:7px;background:#fff;color:#39734b;font:600 9px 'DM Sans',sans-serif;cursor:pointer}
+.season-dashboard-open:hover{background:#f2f7f0}
+.season-dashboard-empty{margin:0;padding:14px;border:1px dashed #dfe6dc;border-radius:8px;color:#7b8579;text-align:center;font-size:10px}
+@media(max-width:640px){
+  .season-dashboard-modal{padding:10px}
+  .season-dashboard-dialog{padding:15px;border-radius:12px;max-height:92dvh}
+  .season-dashboard-heading h2{font-size:15px}
+  .season-dashboard-controls{padding:9px}
+  .season-dashboard-summary{gap:5px}
+  .season-dashboard-stat{padding:9px}
+  .season-dashboard-stat strong{font-size:14px}
+  .season-dashboard-crops{grid-template-columns:1fr 1fr}
+  .season-dashboard-field{padding:8px}
+}
