@@ -142,6 +142,25 @@
       </form>
     </section>
   </div>
+  <div class="crop-modal" id="crop-modal" hidden>
+    <section class="crop-dialog" role="dialog" aria-modal="true" aria-labelledby="crop-dialog-title">
+      <div class="crop-dialog-heading">
+        <div><p class="eyebrow">СПРАВОЧНИКИ</p><h2 id="crop-dialog-title">Культуры хозяйства</h2></div>
+        <button class="crop-close" id="crop-close" type="button" aria-label="Закрыть справочник">×</button>
+      </div>
+      <p class="crop-message" id="crop-message" role="status" aria-live="polite" hidden></p>
+      <div class="crop-list" id="crop-list" aria-live="polite"></div>
+      <form class="crop-form" id="crop-form">
+        <div class="crop-form-heading"><strong>Добавить культуру</strong><span>Доступно участникам хозяйства с правом записи</span></div>
+        <label class="form-field">Название<input id="crop-name" name="name" type="text" maxlength="80" required placeholder="Например, пшеница"></label>
+        <label class="form-field">Код <span class="optional-label">необязательно</span><input id="crop-code" name="code" type="text" maxlength="32" placeholder="Например, WHEAT"></label>
+        <div class="crop-form-actions">
+          <button class="save-field" id="crop-save" type="submit">Добавить</button>
+          <button class="cancel-field" id="crop-cancel" type="button">Закрыть</button>
+        </div>
+      </form>
+    </section>
+  </div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
