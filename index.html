@@ -148,8 +148,13 @@
         <div><p class="eyebrow">СПРАВОЧНИКИ</p><h2 id="crop-dialog-title">Культуры хозяйства</h2></div>
         <button class="crop-close" id="crop-close" type="button" aria-label="Закрыть справочник">×</button>
       </div>
-      <p class="crop-message" id="crop-message" role="status" aria-live="polite" hidden></p>
-      <div class="crop-list" id="crop-list" aria-live="polite"></div>
+      <div class="crop-directory-tabs" role="tablist" aria-label="Справочники хозяйства">
+        <button class="crop-directory-tab is-active" id="crop-directory-tab" type="button" role="tab" aria-selected="true">Культуры</button>
+        <button class="crop-directory-tab" id="technology-directory-tab" type="button" role="tab" aria-selected="false">Технологии</button>
+      </div>
+      <section id="crop-directory-panel">
+        <p class="crop-message" id="crop-message" role="status" aria-live="polite" hidden></p>
+        <div class="crop-list" id="crop-list" aria-live="polite"></div>
       <form class="crop-form" id="crop-form">
         <div class="crop-form-heading"><strong>Добавить культуру</strong><span>Доступно участникам хозяйства с правом записи</span></div>
         <label class="form-field">Название<input id="crop-name" name="name" type="text" maxlength="80" required placeholder="Например, пшеница"></label>
@@ -159,12 +164,23 @@
           <button class="cancel-field" id="crop-cancel" type="button">Закрыть</button>
         </div>
       </form>
+      </section>
+      <section class="technology-directory-panel" id="technology-directory-panel" hidden>
+        <p class="crop-message" id="technology-message" role="status" aria-live="polite" hidden></p>
+        <div class="technology-list" id="technology-list" aria-live="polite"></div>
+        <section class="technology-details" id="technology-details" hidden>
+          <button class="technology-back-list" id="technology-back-list" type="button">← Все технологии</button>
+          <h3 id="technology-title"></h3>
+          <p class="technology-description" id="technology-description" hidden></p>
+          <div class="technology-operations" id="technology-operations"></div>
+        </section>
+      </section>
     </section>
   </div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase-config.js"></script>
-  <script src="app.js?v=77b67f7"></script>
+  <script src="app.js?v=tech-viewer-20261008"></script>
 </body>
 </html>

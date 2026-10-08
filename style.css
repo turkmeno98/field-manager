@@ -126,3 +126,31 @@
 .crop-form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:5px}
 .crop-form-actions button{min-height:34px;padding:0 12px;border-radius:7px;font:600 10px 'DM Sans',sans-serif;cursor:pointer}
 @media(max-width:640px){.directory-button{height:31px;padding:0 7px;font-size:9px}.crop-dialog{padding:17px;border-radius:12px;max-height:90dvh}.crop-form-heading{display:block}.crop-form-heading span{display:block;margin-top:3px}.crop-item{padding:8px 9px}}
+
+/* Read-only cultivation technology browser. */
+.crop-directory-tabs{display:flex;gap:5px;margin:0 0 13px;padding:4px;border-radius:8px;background:#f3f5f1}
+.crop-directory-tab{flex:1;min-height:32px;border:0;border-radius:6px;background:transparent;color:#788276;font:600 10px 'DM Sans',sans-serif;cursor:pointer}
+.crop-directory-tab.is-active{background:#fff;color:#39734b;box-shadow:0 1px 5px #26352212}
+.crop-directory-panel[hidden],.technology-directory-panel[hidden],.technology-details[hidden],.technology-list[hidden]{display:none!important}
+.technology-list{display:grid;gap:6px;max-height:54dvh;overflow:auto}
+.technology-row{display:grid;grid-template-columns:minmax(0,1fr) 55px auto auto;align-items:center;gap:8px;width:100%;padding:9px;border:1px solid #e8ece5;border-radius:8px;background:#fbfcfa;text-align:left;cursor:pointer}
+.technology-row:hover{border-color:#b8cdb5;background:#f5f8f3}
+.technology-row-title{display:grid;gap:3px;min-width:0}
+.technology-row-title strong{overflow:hidden;color:#344235;font:700 10px Manrope,sans-serif;text-overflow:ellipsis;white-space:nowrap}
+.technology-row-title>span,.technology-year,.technology-operation-count{color:#788276;font-size:9px}
+.technology-year{font-variant-numeric:tabular-nums}
+.technology-status{padding:3px 6px;border-radius:99px;background:#f0f2ee;color:#7b8579;font-size:8px;white-space:nowrap}
+.technology-status.is-active{background:#edf5eb;color:#47744d}
+.technology-details{padding-top:5px}
+.technology-back-list{padding:0;border:0;background:none;color:#39734b;font:600 10px 'DM Sans',sans-serif;cursor:pointer}
+.technology-details h3{margin:12px 0 5px;color:#344235;font:700 14px Manrope,sans-serif;line-height:1.4}
+.technology-description{margin:0 0 12px;color:#788276;font-size:10px;line-height:1.5}
+.technology-operations{display:grid;gap:8px;max-height:55dvh;overflow:auto;padding:2px}
+.technology-operation{padding:10px;border:1px solid #e8ece5;border-radius:8px;background:#fbfcfa}
+.technology-operation-heading{display:flex;align-items:flex-start;gap:7px;color:#344235;font-size:10px;line-height:1.45}
+.technology-operation-heading strong{font:700 10px Manrope,sans-serif}
+.technology-operation-no{flex:none;color:#628165;font-weight:700;font-variant-numeric:tabular-nums}
+.technology-operation-meta{display:flex;flex-wrap:wrap;gap:5px 9px;margin-top:6px;color:#788276;font-size:9px;line-height:1.45}
+.technology-products{display:grid;gap:3px;margin:7px 0 0;padding-left:16px;color:#455344;font-size:9px}
+.technology-operation-notes{margin:7px 0 0;color:#7d6750;font-size:9px;line-height:1.5}
+@media(max-width:520px){.technology-row{grid-template-columns:minmax(0,1fr) auto;gap:6px}.technology-row-title{grid-row:span 2}.technology-row-title strong{font-size:9px}.technology-row-title>span{font-size:8px}.technology-year,.technology-status,.technology-operation-count{justify-self:end}.technology-list{max-height:58dvh}}

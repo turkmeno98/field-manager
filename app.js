@@ -44,6 +44,9 @@
   let seasonSaving = false;
   let seasonLookupBlocked = false;
   let seasonHistoryRequest = 0;
+  let technologyRows = [];
+  let technologyListRequest = 0;
+  let technologyDetailsRequest = 0;
   const $ = (selector) => document.querySelector(selector);
   const ui = {
     farmSelector: $('#farm-selector'),
@@ -77,7 +80,13 @@
     seasonSave: $('#season-save'),
     cropDirectory: $('#open-crop-directory'), cropModal: $('#crop-modal'), cropClose: $('#crop-close'),
     cropList: $('#crop-list'), cropForm: $('#crop-form'), cropName: $('#crop-name'), cropCode: $('#crop-code'),
-    cropSave: $('#crop-save'), cropMessage: $('#crop-message')
+    cropSave: $('#crop-save'), cropMessage: $('#crop-message'), cropTitle: $('#crop-dialog-title'),
+    cropPanel: $('#crop-directory-panel'), cropTab: $('#crop-directory-tab'),
+    technologyTab: $('#technology-directory-tab'), technologyPanel: $('#technology-directory-panel'),
+    technologyMessage: $('#technology-message'), technologyList: $('#technology-list'),
+    technologyDetails: $('#technology-details'), technologyTitle: $('#technology-title'),
+    technologyDescription: $('#technology-description'), technologyOperations: $('#technology-operations'),
+    technologyBackList: $('#technology-back-list')
   };
 
   function geodesicRingArea(ring) {
@@ -429,6 +438,7 @@
     }
     ui.cropModal.hidden = false;
     ui.cropForm.reset();
+    setDirectoryView('crops');
     showCropMessage('');
     await loadCropDirectory();
     window.setTimeout(() => ui.cropName.focus(), 0);
@@ -459,6 +469,211 @@
           : formatSupabaseError(error)), 'error');
     } finally {
       ui.cropSave.disabled = false;
+    }
+  }
+
+  function setDirectoryView(view) {
+    const technologies = view === 'technologies';
+    ui.cropPanel.hidden = technologies;
+    ui.technologyPanel.hidden = !technologies;
+    ui.cropTab.classList.toggle('is-active', !technologies);
+    ui.technologyTab.classList.toggle('is-active', technologies);
+    ui.cropTab.setAttribute('aria-selected', String(!technologies));
+    ui.technologyTab.setAttribute('aria-selected', String(technologies));
+    ui.cropTitle.textContent = technologies ? 'Технологии хозяйства' : 'Культуры хозяйства';
+    if (technologies) void loadTechnologyDirectory();
+  }
+
+  function showTechnologyMessage(message, kind = 'info') {
+    ui.technologyMessage.textContent = message;
+    ui.technologyMessage.className = `crop-message is-${kind}`;
+    ui.technologyMessage.hidden = !message;
+  }
+
+  function appendText(parent, tag, className, value) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    element.textContent = value;
+    parent.append(element);
+    return element;
+  }
+
+  function formatTechnologyRate(value, unit) {
+    if (value === null || value === undefined || value === '') return '—';
+    const numeric = Number(value);
+    const formatted = Number.isFinite(numeric)
+      ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(numeric)
+      : String(value);
+    return unit ? `${formatted} ${unit}` : formatted;
+  }
+
+  async function loadTechnologyDirectory() {
+    if (!supabase || !activeFarmId || !authenticatedUser) return;
+    const farmId = activeFarmId;
+    const requestId = ++technologyListRequest;
+    technologyRows = [];
+    ui.technologyDetails.hidden = true;
+    ui.technologyList.hidden = false;
+    ui.technologyList.replaceChildren();
+    showTechnologyMessage('Загружаем технологии…');
+    const loading = document.createElement('p');
+    loading.className = 'crop-empty';
+    loading.textContent = 'Загружаем технологии…';
+    ui.technologyList.append(loading);
+    try {
+      const { data, error } = await supabase.from('cultivation_technologies')
+        .select('id,farm_id,crop_id,name,description,year,is_active')
+        .eq('farm_id', farmId)
+        .order('year', { ascending: false, nullsFirst: false })
+        .order('name', { ascending: true });
+      if (error) throw error;
+      const technologies = data || [];
+      const cropIds = [...new Set(technologies.map((item) => item.crop_id).filter(Boolean))];
+      const cropMap = new Map();
+      const operationCounts = new Map();
+      if (cropIds.length) {
+        const [cropsResult, operationsResult] = await Promise.all([
+          supabase.from('crops').select('id,name').in('id', cropIds),
+          supabase.from('technology_operations').select('technology_id').in('technology_id', technologies.map((item) => item.id))
+        ]);
+        if (cropsResult.error) throw cropsResult.error;
+        if (operationsResult.error) throw operationsResult.error;
+        (cropsResult.data || []).forEach((crop) => cropMap.set(String(crop.id), crop.name));
+        (operationsResult.data || []).forEach((operation) => {
+          const key = String(operation.technology_id);
+          operationCounts.set(key, (operationCounts.get(key) || 0) + 1);
+        });
+      }
+      if (requestId !== technologyListRequest || activeFarmId !== farmId) return;
+      technologyRows = technologies.map((item) => ({
+        ...item,
+        cropName: cropMap.get(String(item.crop_id)) || 'Культура не найдена',
+        operationCount: operationCounts.get(String(item.id)) || 0
+      }));
+      ui.technologyList.replaceChildren();
+      showTechnologyMessage('');
+      if (!technologyRows.length) {
+        const empty = document.createElement('p');
+        empty.className = 'crop-empty';
+        empty.textContent = 'Технологий пока нет. Шаблоны появятся после импорта проверенной технологической карты.';
+        ui.technologyList.append(empty);
+        return;
+      }
+      technologyRows.forEach((technology) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'technology-row';
+        row.dataset.technologyId = technology.id;
+        const title = document.createElement('span');
+        title.className = 'technology-row-title';
+        const crop = document.createElement('strong');
+        crop.textContent = technology.cropName;
+        const name = document.createElement('span');
+        name.textContent = technology.name;
+        title.append(crop, name);
+        const year = appendText(row, 'span', 'technology-year', technology.year ? String(technology.year) : 'Без года');
+        const status = appendText(row, 'span', `technology-status ${technology.is_active ? 'is-active' : ''}`, technology.is_active ? 'Активна' : 'Архивная');
+        const count = appendText(row, 'span', 'technology-operation-count',
+          `${technology.operationCount} ${pluralize(technology.operationCount, 'операция', 'операции', 'операций')}`);
+        row.replaceChildren(title, year, status, count);
+        ui.technologyList.append(row);
+      });
+    } catch (error) {
+      if (requestId !== technologyListRequest || activeFarmId !== farmId) return;
+      console.error('Ошибка загрузки технологий:', error);
+      ui.technologyList.replaceChildren();
+      const message = isRlsError(error)
+        ? 'Чтение технологий запрещено RLS. Проверьте применение миграции и доступ участника хозяйства.'
+        : `Не удалось загрузить технологии: ${formatSupabaseError(error)}`;
+      showTechnologyMessage(message, 'error');
+    }
+  }
+
+  async function openTechnologyDetails(technologyId) {
+    const technology = technologyRows.find((item) => String(item.id) === String(technologyId));
+    if (!technology) return;
+    const requestId = ++technologyDetailsRequest;
+    const farmId = activeFarmId;
+    ui.technologyList.hidden = true;
+    ui.technologyDetails.hidden = false;
+    ui.technologyTitle.textContent = `${technology.cropName} — ${technology.name}${technology.year ? ` — ${technology.year}` : ''}`;
+    ui.technologyDescription.textContent = technology.description || '';
+    ui.technologyDescription.hidden = !technology.description;
+    ui.technologyOperations.replaceChildren();
+    showTechnologyMessage('');
+    appendText(ui.technologyOperations, 'p', 'crop-empty', 'Загружаем операции…');
+    try {
+      const { data, error } = await supabase.from('technology_operations')
+        .select('id,operation_no,name,stage,timing_type,timing_value,application_method,working_solution_rate,working_solution_unit,condition_text,notes')
+        .eq('technology_id', technology.id)
+        .order('operation_no', { ascending: true });
+      if (error) throw error;
+      const operations = data || [];
+      let productsByOperation = new Map();
+      if (operations.length) {
+        const { data: products, error: productsError } = await supabase.from('technology_operation_products')
+          .select('id,technology_operation_id,product_name,rate,rate_unit,sequence_no,notes')
+          .in('technology_operation_id', operations.map((item) => item.id))
+          .order('sequence_no', { ascending: true });
+        if (productsError) throw productsError;
+        productsByOperation = new Map();
+        (products || []).forEach((product) => {
+          const key = String(product.technology_operation_id);
+          if (!productsByOperation.has(key)) productsByOperation.set(key, []);
+          productsByOperation.get(key).push(product);
+        });
+      }
+      if (requestId !== technologyDetailsRequest || activeFarmId !== farmId) return;
+      ui.technologyOperations.replaceChildren();
+      if (!operations.length) {
+        appendText(ui.technologyOperations, 'p', 'crop-empty', 'Операций в этой технологии пока нет.');
+        return;
+      }
+      operations.forEach((operation) => {
+        const card = document.createElement('article');
+        card.className = 'technology-operation';
+        const heading = document.createElement('div');
+        heading.className = 'technology-operation-heading';
+        const number = Number(operation.operation_no);
+        const label = Number.isFinite(number)
+          ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(number)
+          : String(operation.operation_no);
+        appendText(heading, 'span', 'technology-operation-no', `№ ${label}`);
+        appendText(heading, 'strong', '', operation.name);
+        card.append(heading);
+        const meta = document.createElement('div');
+        meta.className = 'technology-operation-meta';
+        if (operation.stage) appendText(meta, 'span', '', `Фаза: ${operation.stage}`);
+        const timing = [operation.timing_value, operation.condition_text].filter(Boolean).join(' · ');
+        if (timing) appendText(meta, 'span', '', `Срок: ${timing}`);
+        if (operation.application_method) appendText(meta, 'span', '', `Способ: ${operation.application_method}`);
+        if (operation.working_solution_rate !== null) {
+          appendText(meta, 'span', '', `Рабочий раствор: ${formatTechnologyRate(operation.working_solution_rate, operation.working_solution_unit)}`);
+        }
+        if (meta.childElementCount) card.append(meta);
+        const products = productsByOperation.get(String(operation.id)) || [];
+        if (products.length) {
+          const list = document.createElement('ul');
+          list.className = 'technology-products';
+          products.forEach((product) => {
+            const line = document.createElement('li');
+            line.textContent = `${product.product_name} — ${formatTechnologyRate(product.rate, product.rate_unit)}`;
+            if (product.notes) line.title = product.notes;
+            list.append(line);
+          });
+          card.append(list);
+        }
+        const notes = [operation.notes].filter(Boolean).join(' · ');
+        if (notes) appendText(card, 'p', 'technology-operation-notes', notes);
+        ui.technologyOperations.append(card);
+      });
+    } catch (error) {
+      if (requestId !== technologyDetailsRequest || activeFarmId !== farmId) return;
+      console.error('Ошибка загрузки операций технологии:', error);
+      ui.technologyOperations.replaceChildren();
+      showTechnologyMessage(isRlsError(error)
+        ? 'Чтение операций запрещено RLS. Проверьте доступ к технологии в этом хозяйстве.'
+        : `Не удалось загрузить операции: ${formatSupabaseError(error)}`, 'error');
     }
   }
 
@@ -1201,6 +1416,16 @@
   $('#crop-cancel').addEventListener('click', () => { ui.cropModal.hidden = true; });
   ui.cropModal.addEventListener('click', (event) => { if (event.target === ui.cropModal) ui.cropModal.hidden = true; });
   ui.cropForm.addEventListener('submit', saveCrop);
+  ui.cropTab.addEventListener('click', () => setDirectoryView('crops'));
+  ui.technologyTab.addEventListener('click', () => setDirectoryView('technologies'));
+  ui.technologyBackList.addEventListener('click', () => {
+    ui.technologyDetails.hidden = true;
+    ui.technologyList.hidden = false;
+  });
+  ui.technologyList.addEventListener('click', (event) => {
+    const row = event.target.closest('[data-technology-id]');
+    if (row) void openTechnologyDetails(row.dataset.technologyId);
+  });
     ui.seasonAdd.addEventListener('click', openSeasonForm);
   $('#season-close').addEventListener('click', () => { ui.seasonModal.hidden = true; });
   $('#season-cancel').addEventListener('click', () => { ui.seasonModal.hidden = true; });
