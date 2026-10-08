@@ -14,8 +14,8 @@
     <header class="topbar">
       <a class="brand" href="#" aria-label="Менеджер полей — главная"><span class="brand-mark" aria-hidden="true">↗</span><span><strong>Поле</strong><small>МЕНЕДЖЕР</small></span></a>
       <div class="workspace-label"><span class="status-dot"></span> Рабочая карта</div>
-      <label class="farm-selector-wrap" for="farm-selector"><span>Хозяйство</span><select id="farm-selector" disabled><option value="">Требуется вход</option></select></label>
-      <button class="user-button" type="button" aria-label="Профиль пользователя" title="Вход будет добавлен следующим этапом">АГ</button>
+      <label class="farm-selector-wrap" for="farm-selector"><span>Хозяйство</span><select id="farm-selector" disabled><option value="">Требуется вход</option></select><span class="farm-role-label" id="farm-role-label" hidden></span></label>
+      <button class="user-button auth-control" id="auth-control" type="button" aria-label="Войти">Войти</button>
     </header>
     <main class="workspace">
       <section class="map-section" aria-label="Карта сельскохозяйственных полей">
@@ -100,7 +100,46 @@
         </div>
       </aside>
     </main>
-    <footer class="mobile-footer"><span class="footer-dot"></span> OpenStreetMap · Карта сельхозполей</footer>
+  <footer class="mobile-footer"><span class="footer-dot"></span> OpenStreetMap · Карта сельхозполей</footer>
+  </div>
+  <div class="auth-modal" id="auth-modal" hidden>
+    <section class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-dialog-title">
+      <div class="auth-dialog-heading">
+        <div><p class="eyebrow">МЕНЕДЖЕР ПОЛЕЙ</p><h2 id="auth-dialog-title">Вход в аккаунт</h2></div>
+        <button class="auth-close" id="auth-close" type="button" aria-label="Закрыть окно входа">×</button>
+      </div>
+      <section class="auth-panel" id="auth-form-panel">
+        <div class="auth-mode-switch" role="group" aria-label="Способ входа">
+          <button id="auth-mode-login" type="button" class="is-active" aria-pressed="true">Войти</button>
+          <button id="auth-mode-register" type="button" aria-pressed="false">Регистрация</button>
+        </div>
+        <p class="auth-message" id="auth-message" role="status" aria-live="polite" hidden></p>
+        <form id="auth-form">
+          <label class="form-field">Email<input id="auth-email" name="email" type="email" autocomplete="email" maxlength="254" required placeholder="name@example.com"></label>
+          <label class="form-field">Пароль<input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="6" required placeholder="Не менее 6 символов"></label>
+          <button class="save-field auth-submit" id="auth-submit" type="submit">Войти</button>
+        </form>
+        <p class="auth-privacy-note">Пароль обрабатывает Supabase Auth и не сохраняется приложением.</p>
+      </section>
+      <section class="auth-panel auth-loading-panel" id="auth-loading-panel" hidden>
+        <p class="auth-message" id="auth-loading-message" role="status" aria-live="polite">Проверяем сессию и загружаем хозяйства…</p>
+        <button class="cancel-field" id="auth-retry" type="button" hidden>Повторить загрузку</button>
+      </section>
+      <section class="auth-panel no-farm-panel" id="no-farm-panel" hidden>
+        <div class="auth-empty-icon" aria-hidden="true">⌂</div>
+        <h3>У вас пока нет хозяйства</h3>
+        <p>Создайте хозяйство, чтобы начать работу с полями. Вы станете его владельцем.</p>
+        <button class="save-field auth-submit" id="open-farm-create" type="button">Создать хозяйство</button>
+        <button class="auth-logout-link" id="no-farm-logout" type="button">Выйти из аккаунта</button>
+      </section>
+      <form class="auth-panel farm-create-panel" id="farm-create-form" hidden>
+        <p class="auth-section-caption">Новое хозяйство будет связано с вашим аккаунтом, которому назначится роль владельца.</p>
+        <p class="auth-message" id="farm-create-message" role="status" aria-live="polite" hidden></p>
+        <label class="form-field">Название хозяйства<input id="farm-name" name="farm_name" type="text" maxlength="120" required placeholder="Например, Агрофирма Заря"></label>
+        <label class="form-field">Примечание <span class="optional-label">необязательно</span><textarea id="farm-notes" name="farm_notes" rows="3" maxlength="1000" placeholder="Дополнительная информация"></textarea></label>
+        <div class="auth-form-actions"><button class="save-field" id="farm-create-submit" type="submit">Создать хозяйство</button><button class="cancel-field" id="farm-create-cancel" type="button">Назад</button></div>
+      </form>
+    </section>
   </div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>

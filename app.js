@@ -29,7 +29,11 @@
   let currentSession = null;
   let lastAuthEvent = 'INITIAL_SESSION';
   let farms = [];
+  let farmRoles = new Map();
   let activeFarmId = null;
+  let authMode = 'login';
+  let authSubmitting = false;
+  let farmCreating = false;
   let loadInProgress = false;
   let draft = null;
   let selectedId = null;
@@ -43,6 +47,16 @@
   const $ = (selector) => document.querySelector(selector);
   const ui = {
     farmSelector: $('#farm-selector'),
+    farmRole: $('#farm-role-label'), authControl: $('#auth-control'),
+    authModal: $('#auth-modal'), authClose: $('#auth-close'), authTitle: $('#auth-dialog-title'),
+    authFormPanel: $('#auth-form-panel'), authForm: $('#auth-form'), authModeLogin: $('#auth-mode-login'),
+    authModeRegister: $('#auth-mode-register'), authEmail: $('#auth-email'), authPassword: $('#auth-password'),
+    authSubmit: $('#auth-submit'), authMessage: $('#auth-message'), authLoadingPanel: $('#auth-loading-panel'),
+    authLoadingMessage: $('#auth-loading-message'), authRetry: $('#auth-retry'),
+    noFarmPanel: $('#no-farm-panel'), openFarmCreate: $('#open-farm-create'), noFarmLogout: $('#no-farm-logout'),
+    farmCreateForm: $('#farm-create-form'), farmName: $('#farm-name'), farmNotes: $('#farm-notes'),
+    farmCreateSubmit: $('#farm-create-submit'), farmCreateCancel: $('#farm-create-cancel'),
+    farmCreateMessage: $('#farm-create-message'),
     add: $('#add-field'), emptyAdd: $('#empty-add-field'), myFields: $('#my-fields'),
     layersToggle: $('#layers-toggle'),
     fieldsListView: $('#fields-list-view'), fieldsDetailsView: $('#field-details-view'),
@@ -132,25 +146,214 @@
     }
   }
 
+  function updateAuthControl() {
+    const isAuthenticated = Boolean(authenticatedUser);
+    ui.authControl.textContent = isAuthenticated ? 'Выйти' : 'Войти';
+    ui.authControl.setAttribute('aria-label', isAuthenticated ? 'Выйти из аккаунта' : 'Войти в аккаунт');
+    ui.authControl.title = isAuthenticated ? `Выйти (${authenticatedUser.email || 'аккаунт'})` : 'Войти или зарегистрироваться';
+  }
+
+  function showAuthMessage(message, kind = 'error') {
+    ui.authMessage.textContent = message;
+    ui.authMessage.className = `auth-message is-${kind}`;
+    ui.authMessage.hidden = !message;
+  }
+
+  function showFarmCreateMessage(message, kind = 'error') {
+    ui.farmCreateMessage.textContent = message;
+    ui.farmCreateMessage.className = `auth-message is-${kind}`;
+    ui.farmCreateMessage.hidden = !message;
+  }
+
+  function setAuthMode(mode) {
+    authMode = mode === 'register' ? 'register' : 'login';
+    const registering = authMode === 'register';
+    ui.authModeLogin.classList.toggle('is-active', !registering);
+    ui.authModeRegister.classList.toggle('is-active', registering);
+    ui.authModeLogin.setAttribute('aria-pressed', String(!registering));
+    ui.authModeRegister.setAttribute('aria-pressed', String(registering));
+    ui.authTitle.textContent = registering ? 'Создать аккаунт' : 'Вход в аккаунт';
+    ui.authSubmit.textContent = registering ? 'Зарегистрироваться' : 'Войти';
+    ui.authPassword.autocomplete = registering ? 'new-password' : 'current-password';
+    showAuthMessage('');
+  }
+
+  function showAuthForm(mode = 'login') {
+    setAuthMode(mode);
+    ui.authFormPanel.hidden = false;
+    ui.authLoadingPanel.hidden = true;
+    ui.noFarmPanel.hidden = true;
+    ui.farmCreateForm.hidden = true;
+    ui.authClose.hidden = false;
+    ui.authModal.hidden = false;
+    window.setTimeout(() => ui.authEmail.focus(), 0);
+  }
+
+  function showAuthLoading(message = 'Проверяем сессию и загружаем хозяйства…', error = false) {
+    ui.authFormPanel.hidden = true;
+    ui.authLoadingPanel.hidden = false;
+    ui.noFarmPanel.hidden = true;
+    ui.farmCreateForm.hidden = true;
+    ui.authClose.hidden = true;
+    ui.authLoadingMessage.textContent = message;
+    ui.authLoadingMessage.className = `auth-message ${error ? 'is-error' : 'is-info'}`;
+    ui.authRetry.hidden = !error;
+    ui.authModal.hidden = false;
+  }
+
+  function showNoFarmState() {
+    ui.authFormPanel.hidden = true;
+    ui.authLoadingPanel.hidden = true;
+    ui.noFarmPanel.hidden = false;
+    ui.farmCreateForm.hidden = true;
+    ui.authTitle.textContent = 'Настройка хозяйства';
+    ui.authClose.hidden = true;
+    ui.authModal.hidden = false;
+  }
+
+  function showFarmCreateForm() {
+    ui.authFormPanel.hidden = true;
+    ui.authLoadingPanel.hidden = true;
+    ui.noFarmPanel.hidden = true;
+    ui.farmCreateForm.hidden = false;
+    ui.authTitle.textContent = 'Создать хозяйство';
+    ui.farmName.focus();
+    showFarmCreateMessage('');
+  }
+
+  function authErrorMessage(error, action) {
+    const message = String(error?.message || '').toLowerCase();
+    if (/invalid login credentials|invalid email or password/.test(message)) return 'Неверный email или пароль.';
+    if (/email not confirmed/.test(message)) return 'Подтвердите email по ссылке из письма, затем войдите.';
+    if (/already registered|user already exists/.test(message)) return 'Этот email уже зарегистрирован. Переключитесь на вход.';
+    if (/password.*(at least|characters|weak)|weak password/.test(message)) return 'Пароль слишком простой. Используйте не менее 6 символов.';
+    if (/rate limit|too many requests/.test(message)) return 'Слишком много попыток. Подождите немного и повторите.';
+    if (/failed to fetch|network|fetch failed/.test(message)) return 'Нет соединения с Supabase. Проверьте интернет и повторите.';
+    return `Не удалось ${action}: ${formatSupabaseError(error)}.`;
+  }
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    if (authSubmitting || !supabase || !ui.authForm.reportValidity()) return;
+    const email = ui.authEmail.value.trim();
+    const password = ui.authPassword.value;
+    authSubmitting = true;
+    ui.authSubmit.disabled = true;
+    ui.authSubmit.textContent = authMode === 'register' ? 'Создаём аккаунт…' : 'Входим…';
+    showAuthMessage('');
+    try {
+      if (authMode === 'register') {
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        ui.authPassword.value = '';
+        if (data.session) {
+          await handleAuthStateChange('SIGNED_IN', data.session);
+          showAuthMessage('Аккаунт создан. Загружаем доступ к хозяйствам…', 'success');
+        } else {
+          setAuthMode('login');
+          ui.authEmail.value = email;
+          showAuthMessage('Аккаунт создан. Проверьте почту и подтвердите адрес, затем войдите.', 'success');
+        }
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        ui.authPassword.value = '';
+        await handleAuthStateChange('SIGNED_IN', data.session);
+      }
+    } catch (error) {
+      console.error('Ошибка Supabase Auth:', error);
+      ui.authPassword.value = '';
+      showAuthMessage(authErrorMessage(error, authMode === 'register' ? 'создать аккаунт' : 'войти'));
+    } finally {
+      authSubmitting = false;
+      ui.authSubmit.disabled = false;
+      ui.authSubmit.textContent = authMode === 'register' ? 'Зарегистрироваться' : 'Войти';
+    }
+  }
+
+  async function signOutCurrentUser() {
+    if (!supabase) return;
+    ui.authControl.disabled = true;
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+    } catch (error) {
+      console.error('Ошибка выхода:', error);
+      setStatus(`Не удалось выйти: ${formatSupabaseError(error)}`, 'error', false);
+      showAuthMessage(authErrorMessage(error, 'выйти'));
+    } finally {
+      ui.authControl.disabled = false;
+    }
+  }
+
+  async function createFarm(event) {
+    event.preventDefault();
+    if (farmCreating || !supabase || !ui.farmCreateForm.reportValidity()) return;
+    farmCreating = true;
+    ui.farmCreateSubmit.disabled = true;
+    ui.farmCreateSubmit.textContent = 'Создаём хозяйство…';
+    showFarmCreateMessage('');
+    try {
+      const user = await requireUser();
+      if (!user) return;
+      const { data: farmId, error } = await supabase.rpc('create_farm_for_current_user', {
+        p_name: ui.farmName.value.trim(),
+        p_notes: ui.farmNotes.value.trim() || null
+      });
+      if (error) throw error;
+      if (!farmId) throw new Error('RPC не вернула идентификатор хозяйства.');
+      const createdFarmId = String(farmId);
+      ui.farmCreateForm.reset();
+      const loaded = await loadAccessibleFarms(user, createdFarmId);
+      if (!loaded) throw new Error('Хозяйство создано, но не появилось в списке доступных. Проверьте membership и RLS.');
+      setStatus('Хозяйство создано. Вам назначена роль владельца.', 'success');
+      await loadFieldsFromSupabase();
+    } catch (error) {
+      console.error('Ошибка создания хозяйства:', error);
+      const detail = isRlsError(error)
+        ? 'Нет доступа к RPC create_farm_for_current_user. Проверьте EXECUTE для authenticated и действующую сессию.'
+        : authErrorMessage(error, 'создать хозяйство');
+      showFarmCreateMessage(detail);
+    } finally {
+      farmCreating = false;
+      ui.farmCreateSubmit.disabled = false;
+      ui.farmCreateSubmit.textContent = 'Создать хозяйство';
+    }
+  }
+
+  function farmRoleLabel(role) {
+    return ({ owner: 'Владелец', manager: 'Управляющий', agronomist: 'Агроном', operator: 'Оператор', viewer: 'Наблюдатель' })[role] || role || '';
+  }
+
+  function updateSelectedFarmRole() {
+    const role = farmRoles.get(String(activeFarmId));
+    ui.farmRole.textContent = role ? farmRoleLabel(role) : '';
+    ui.farmRole.hidden = !role;
+  }
+
   async function handleAuthStateChange(event, session) {
     const nextUser = session?.user || null;
     const previousId = authenticatedUser?.id || null;
     currentSession = session || null;
     lastAuthEvent = event;
     authenticatedUser = nextUser;
+    updateAuthControl();
     if (!nextUser) {
       if (previousId || event === 'SIGNED_OUT' || event === 'INITIAL_SESSION') {
         setDataActionsEnabled(false);
         farms = [];
+        farmRoles = new Map();
         activeFarmId = null;
         ui.farmSelector.replaceChildren(new Option('Требуется вход', ''));
         ui.farmSelector.disabled = true;
+        ui.farmRole.hidden = true;
         clearRenderedFields();
         selectedId = null;
         draft = null;
         resetCard();
         renderFieldsList();
         setStatus('Требуется вход. Авторизуйтесь, чтобы открыть хозяйства и поля.', 'info', false);
+        showAuthForm('login');
       }
       return;
     }
@@ -163,6 +366,7 @@
       resetCard();
     }
     if (event === 'SIGNED_IN' || previousId !== nextUser.id || !isReady) {
+      showAuthLoading();
       await loadFieldsFromSupabase();
     }
   }
@@ -539,29 +743,43 @@
     ui.seasonAdd.disabled = !enabled || !selectedId;
   }
 
-  async function loadAccessibleFarms() {
-    const { data, error } = await supabase.from('farms').select('id,name').order('name', { ascending: true });
-    if (error) throw error;
-    farms = data || [];
+  async function loadAccessibleFarms(user = authenticatedUser, preferredFarmId = null) {
+    if (!user?.id) throw new Error('Не удалось определить текущего пользователя Supabase Auth.');
+    const [membersResult, farmsResult] = await Promise.all([
+      supabase.from('farm_members').select('farm_id,role').eq('user_id', user.id),
+      supabase.from('farms').select('id,name').order('name', { ascending: true })
+    ]);
+    if (membersResult.error) throw Object.assign(membersResult.error, { tableName: 'farm_members' });
+    if (farmsResult.error) throw Object.assign(farmsResult.error, { tableName: 'farms' });
+
+    farmRoles = new Map((membersResult.data || []).map((membership) => [String(membership.farm_id), membership.role]));
+    farms = (farmsResult.data || []).filter((farm) => farmRoles.has(String(farm.id)));
+    if (farmRoles.size && !farms.length) {
+      throw new Error('У пользователя найдены записи farm_members, но ни одно хозяйство не доступно через RLS.');
+    }
     ui.farmSelector.replaceChildren(new Option(farms.length ? 'Выберите хозяйство' : 'Нет доступных хозяйств', ''));
     farms.forEach((farm) => ui.farmSelector.add(new Option(farm.name, String(farm.id))));
     if (!farms.length) {
       activeFarmId = null;
       ui.farmSelector.disabled = true;
+      ui.farmRole.hidden = true;
       clearRenderedFields();
       renderFieldsList();
       setDataActionsEnabled(false);
       ui.emptyState.hidden = false;
       ui.form.hidden = true;
-      setStatus('У этой учётной записи пока нет доступных хозяйств. Попросите владельца добавить вас или войдите под другой учётной записью.', 'info');
+      setStatus('У вас пока нет хозяйства. Создайте хозяйство, чтобы начать работу.', 'info');
+      showNoFarmState();
       return false;
     }
-    const selected = farms.some((farm) => String(farm.id) === String(activeFarmId))
-      ? activeFarmId
-      : String(farms[0].id);
+    const selected = preferredFarmId && farms.some((farm) => String(farm.id) === String(preferredFarmId))
+      ? String(preferredFarmId)
+      : farms.some((farm) => String(farm.id) === String(activeFarmId)) ? activeFarmId : String(farms[0].id);
     activeFarmId = String(selected);
     ui.farmSelector.value = activeFarmId;
     ui.farmSelector.disabled = false;
+    updateSelectedFarmRole();
+    ui.authModal.hidden = true;
     return true;
   }
 
@@ -575,7 +793,7 @@
       requestUserId = user.id;
       setDataActionsEnabled(false);
       setStatus('Загружаем хозяйства и поля…', 'loading');
-      if (!await loadAccessibleFarms()) return;
+      if (!await loadAccessibleFarms(user)) return;
       const requestedFarmId = activeFarmId;
       ui.farmSelector.disabled = true;
       const { data, error } = await supabase.from(TABLE).select(SELECT_COLUMNS).eq('farm_id', requestedFarmId).order('created_at', { ascending: false });
@@ -604,6 +822,7 @@
       const detail = formatSupabaseError(error);
       const policy = isRlsError(error) ? ' Проверьте членство в выбранном хозяйстве и RLS-policy SELECT для authenticated на public.fields.' : ' Проверьте сессию, доступ к Data API и RLS-политики public.fields.';
       setStatus(`Не удалось загрузить поля: ${detail}.${policy}`, 'error', true);
+      if (authenticatedUser) showAuthLoading(`Не удалось загрузить данные: ${detail}.${policy}`, true);
     } finally {
       ui.farmSelector.disabled = farms.length === 0;
       loadInProgress = false;
@@ -920,6 +1139,7 @@
   });
   ui.farmSelector.addEventListener('change', () => {
     activeFarmId = ui.farmSelector.value || null;
+    updateSelectedFarmRole();
     clearRenderedFields();
     selectedId = null;
     draft = null;
@@ -953,7 +1173,30 @@
   });
 
   ui.retry.addEventListener('click', loadFieldsFromSupabase);
+  ui.authControl.addEventListener('click', () => {
+    if (authenticatedUser) void signOutCurrentUser();
+    else showAuthForm('login');
+  });
+  ui.authClose.addEventListener('click', () => { if (!authenticatedUser) ui.authModal.hidden = true; });
+  ui.authModal.addEventListener('click', (event) => {
+    if (event.target === ui.authModal && !authenticatedUser) ui.authModal.hidden = true;
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !authenticatedUser && !ui.authModal.hidden) ui.authModal.hidden = true;
+  });
+  ui.authModeLogin.addEventListener('click', () => setAuthMode('login'));
+  ui.authModeRegister.addEventListener('click', () => setAuthMode('register'));
+  ui.authForm.addEventListener('submit', submitAuth);
+  ui.openFarmCreate.addEventListener('click', showFarmCreateForm);
+  ui.noFarmLogout.addEventListener('click', signOutCurrentUser);
+  ui.farmCreateForm.addEventListener('submit', createFarm);
+  ui.farmCreateCancel.addEventListener('click', showNoFarmState);
+  ui.authRetry.addEventListener('click', () => {
+    showAuthLoading();
+    void loadFieldsFromSupabase();
+  });
   setDataActionsEnabled(false);
+  updateAuthControl();
   initializeSupabase();
   window.addEventListener('resize', () => map.invalidateSize({ pan: false }));
   window.fieldManagerMap = { map, osmLayer, satelliteLayer, layerControl, fields, fieldsLayer, areaHectares, loadFieldsFromSupabase, renderFieldsList };
