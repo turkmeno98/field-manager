@@ -105,6 +105,16 @@
     return error?.code === '42501' || /permission denied|row-level security|violates row.level security/i.test(error?.message || '');
   }
 
+  function createUuid() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
   function showSeasonFormMessage(message, kind = 'info') {
     ui.seasonFormMessage.textContent = message;
     ui.seasonFormMessage.className = `season-form-message is-${kind}`;
@@ -291,6 +301,7 @@
     showSeasonFormMessage('Проверяем сезон и сохраняем…');
     setStatus('Сохраняем сезон в Supabase…', 'loading');
     let createdSeason = null;
+    let operation = 'SELECT';
     try {
       const duplicateResult = await supabase.from('field_seasons').select('id').eq('field_id', fieldId)
         .eq('season_year', year).limit(1);
@@ -301,11 +312,13 @@
         return;
       }
 
+      const seasonId = createUuid();
+      operation = 'INSERT';
       const seasonResult = await supabase.from('field_seasons').insert({
-        field_id: fieldId, season_year: year, season_no: 1, status
-      }).select('*').single();
+        id: seasonId, field_id: fieldId, season_year: year, season_no: 1, status
+      });
       if (seasonResult.error) throw Object.assign(seasonResult.error, { tableName: 'field_seasons' });
-      createdSeason = seasonResult.data;
+      createdSeason = { id: seasonId };
 
       const cropResult = await supabase.from('season_crops').insert({
         field_season_id: createdSeason.id,
@@ -315,7 +328,7 @@
         planned_yield_c_ha: ui.seasonPlannedYield.value === '' ? null : Number(ui.seasonPlannedYield.value),
         actual_yield_c_ha: ui.seasonActualYield.value === '' ? null : Number(ui.seasonActualYield.value),
         status: 'planned'
-      }).select('*').single();
+      });
       if (cropResult.error) {
         if (isRlsError(cropResult.error)) {
           throw Object.assign(cropResult.error, { tableName: 'season_crops' });
@@ -343,10 +356,11 @@
         return;
       }
       const table = error.tableName || (createdSeason ? 'season_crops' : 'field_seasons');
-      const policy = isRlsError(error) ? ` Нужна RLS-policy INSERT на public.${table} для роли anon; при ошибке чтения также SELECT.` : '';
+      const policy = isRlsError(error) ? ` Нужна RLS-policy ${operation} на public.${table} для роли anon.` : '';
       const cleanupNote = error.cleanupNote || '';
-      showSeasonFormMessage(`Не удалось сохранить сезон: ${detail}.${policy}${cleanupNote}`, 'error');
-      setStatus(`Ошибка записи public.${table}: ${detail}.${policy}${cleanupNote}`, 'error', false);
+      const action = operation === 'SELECT' ? 'прочитать' : 'записать';
+      showSeasonFormMessage(`Не удалось ${action} public.${table}: ${detail}.${policy}${cleanupNote}`, 'error');
+      setStatus(`Ошибка ${operation} public.${table}: ${detail}.${policy}${cleanupNote}`, 'error', false);
     } finally {
       seasonSaving = false;
       ui.seasonSave.disabled = seasonCrops.length === 0;
@@ -508,7 +522,9 @@
     } catch (error) {
       console.error('Ошибка загрузки полей Supabase:', error);
       setDataActionsEnabled(false);
-      setStatus(`Не удалось загрузить поля: ${formatSupabaseError(error)}. Проверьте ключ, доступ к Data API и RLS-политики таблицы public.fields.`, 'error', true);
+      const detail = formatSupabaseError(error);
+      const policy = isRlsError(error) ? ' Нужна RLS-policy SELECT на public.fields для роли anon.' : ' Проверьте ключ, доступ к Data API и RLS-политики public.fields.';
+      setStatus(`Не удалось загрузить поля: ${detail}.${policy}`, 'error', true);
     } finally {
       loadInProgress = false;
     }
@@ -716,7 +732,10 @@
       window.setTimeout(() => { if (ui.status.classList.contains('is-success')) ui.status.hidden = true; }, 3500);
     } catch (error) {
       console.error('Ошибка сохранения поля Supabase:', error);
-      setStatus(`Не удалось сохранить поле: ${formatSupabaseError(error)}. Проверьте разрешения INSERT/UPDATE и RLS-политики.`, 'error', true);
+      const detail = formatSupabaseError(error);
+      const operation = isNew ? 'INSERT' : 'UPDATE';
+      const policy = isRlsError(error) ? ` Нужна RLS-policy ${operation} на public.fields для роли anon.` : ' Проверьте подключение и ограничения таблицы.';
+      setStatus(`Не удалось сохранить поле: ${detail}.${policy}`, 'error', true);
     } finally {
       ui.save.disabled = false;
       ui.delete.disabled = false;
@@ -758,7 +777,9 @@
       window.setTimeout(() => { if (ui.status.classList.contains('is-success')) ui.status.hidden = true; }, 3500);
     } catch (error) {
       console.error('Ошибка удаления поля Supabase:', error);
-      setStatus(`Не удалось удалить поле: ${formatSupabaseError(error)}. Проверьте разрешение DELETE и RLS-политику.`, 'error', true);
+      const detail = formatSupabaseError(error);
+      const policy = isRlsError(error) ? ' Нужна RLS-policy DELETE на public.fields для роли anon.' : ' Проверьте подключение и ограничения таблицы.';
+      setStatus(`Не удалось удалить поле: ${detail}.${policy}`, 'error', true);
     } finally {
       ui.delete.disabled = false;
     }
@@ -789,7 +810,7 @@
       const policy = isRlsError(error) ? ' Нужна RLS-policy SELECT на public.varieties для роли anon.' : '';
       showSeasonFormMessage(`Не удалось загрузить сорта: ${detail}.${policy}`, 'error');
       setStatus(`Ошибка чтения public.varieties: ${detail}.${policy}`, 'error', false);
-      seasonLookupBlocked = isRlsError(error);
+      seasonLookupBlocked = true;
       ui.seasonSave.disabled = true;
     }
   });
