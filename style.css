@@ -12,4 +12,23 @@
 @media(max-width:640px){.sync-status{top:54px;left:8px;max-width:calc(100% - 16px);padding:8px 10px;font-size:10px}.sync-status button{padding:6px 8px}.map-hint{bottom:38px}}
 .field-details-view{display:flex;flex:1;flex-direction:column;min-height:0;overflow:hidden}.fields-list-view{display:flex;flex:1;flex-direction:column;min-height:0;overflow:hidden}.fields-list-view[hidden],.field-details-view[hidden]{display:none}.fields-list-heading{flex:0 0 auto}.list-close{width:30px;height:30px;border:1px solid #e8ece5;border-radius:8px;background:#fff;color:#788175;font-size:19px;line-height:1;cursor:pointer}.fields-list-controls{padding:15px 18px 12px;border-bottom:1px solid #f0f2ee}.field-list-search{height:38px;padding:0 10px;display:flex;align-items:center;gap:8px;border:1px solid #e1e6de;border-radius:8px;color:#879185}.field-list-search>span{font-size:17px}.field-list-search input{width:100%;min-width:0;border:0;outline:0;background:transparent;font:12px 'DM Sans',sans-serif;color:#344034}.field-list-search:focus-within{border-color:#82aa84;box-shadow:0 0 0 2px #82aa8422}.field-list-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}.field-list-filters select{width:100%;height:34px;padding:0 8px;border:1px solid #e1e6de;border-radius:7px;background:#fff;color:#566155;font:11px 'DM Sans',sans-serif}.fields-list{flex:1;min-height:0;overflow:auto;padding:6px 10px}.field-list-item{width:100%;display:block;margin:4px 0;padding:11px 10px;text-align:left;border:1px solid transparent;border-radius:9px;background:#fff;color:#374337;cursor:pointer;transition:background .15s,border-color .15s}.field-list-item:hover{background:#f7f9f5;border-color:#e7ece4}.field-list-item.is-selected{background:#f0f6ee;border-color:#cfe0cc}.field-list-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.field-list-item-top strong{overflow:hidden;color:#344235;font:700 12px Manrope,sans-serif;text-overflow:ellipsis;white-space:nowrap}.field-list-area{flex:none;color:#47734c;font-size:10px;font-weight:700}.field-list-crop{display:block;margin-top:6px;color:#858f83;font-size:10px}.fields-list-empty{padding:25px 12px;text-align:center;color:#899187;font-size:11px;line-height:1.6}.fields-list-summary{flex:none;padding:13px 18px;border-top:1px solid #f0f2ee;color:#657064;font-size:11px;font-weight:700}.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:640px){.fields-list-heading{padding:12px 15px 9px}.fields-list-controls{padding:9px 12px}.field-list-search{height:34px}.field-list-filters select{height:31px;font-size:10px}.fields-list{padding:4px 8px}.field-list-item{padding:9px}.fields-list-summary{padding:10px 13px;font-size:10px}.field-list-item-top strong{font-size:11px}}
-
+/* История сезонов: интерфейсный каркас без чтения или записи в БД. */
+.season-history{margin:4px 0 16px;padding:13px;border:1px solid #e8ece5;border-radius:9px;background:#fbfcfa}
+.season-history[hidden]{display:none}
+.season-history-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.season-history-heading .eyebrow{margin:0 0 3px;font-size:8px}
+.season-history-heading h3{margin:0;color:#344235;font:700 12px Manrope,sans-serif}
+.season-add{flex:none;padding:6px 8px;border:1px solid #dfe6dc;border-radius:7px;background:#fff;color:#39734b;font:600 9px 'DM Sans',sans-serif}
+.season-add:disabled{opacity:.6;cursor:not-allowed}
+.season-list{display:grid;gap:8px}
+.season-empty{margin:0;padding:12px 8px;border:1px dashed #dfe6dc;border-radius:7px;color:#778174;text-align:center;font-size:10px}
+.season-coming-soon{margin:8px 0 0;color:#929a90;font-size:9px;line-height:1.45}
+.season-item{padding:10px;border:1px solid #e8ece5;border-radius:7px;background:#fff}
+.season-item-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.season-item-heading strong{font:700 12px Manrope,sans-serif;color:#344235}
+.season-status{padding:3px 6px;border-radius:99px;background:#f0f3ed;color:#657064;font-size:8px}
+.season-facts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:9px 0 0}
+.season-facts div{min-width:0}
+.season-facts dt{color:#929a90;font-size:8px}
+.season-facts dd{overflow-wrap:anywhere;margin:3px 0 0;color:#495449;font-size:9px;font-weight:600}
+@media(max-width:640px){.season-history{margin:2px 0 10px;padding:10px}.season-history-heading{align-items:flex-start}.season-add{font-size:8px;padding:6px}.season-empty{padding:9px 6px}.season-facts{gap:7px}}

@@ -54,6 +54,27 @@
             <label class="form-field">Урожайность, ц/га<input id="field-yield" name="yield" type="number" min="0" step="0.1" placeholder="Не указана"></label>
           </div>
           <label class="form-field">Примечание<textarea id="field-note" name="note" rows="3" maxlength="1000" placeholder="Дополнительная информация"></textarea></label>
+          <section class="season-history" id="season-history" aria-labelledby="season-history-title" hidden>
+            <div class="season-history-heading">
+              <div><p class="eyebrow">АГРОНОМИЯ</p><h3 id="season-history-title">История сезонов</h3></div>
+              <button class="season-add" type="button" disabled aria-disabled="true">＋ Добавить сезон</button>
+            </div>
+            <div class="season-list" id="season-list" aria-live="polite">
+              <p class="season-empty">Сезонов пока нет</p>
+            </div>
+            <p class="season-coming-soon">Добавление сезонов будет подключено следующим этапом.</p>
+          </section>
+          <template id="season-item-template">
+            <article class="season-item">
+              <div class="season-item-heading"><strong data-season-year></strong><span class="season-status" data-season-status></span></div>
+              <dl class="season-facts">
+                <div><dt>Культура</dt><dd data-season-crop></dd></div>
+                <div><dt>Сорт / гибрид</dt><dd data-season-variety></dd></div>
+                <div><dt>План, ц/га</dt><dd data-season-planned-yield></dd></div>
+                <div><dt>Факт, ц/га</dt><dd data-season-actual-yield></dd></div>
+              </dl>
+            </article>
+          </template>
           <div class="form-actions"><button class="save-field" id="save-field" type="submit">Сохранить</button><button class="cancel-field" id="cancel-field" type="button">Отмена</button><button class="delete-field" id="delete-field" type="button" hidden>Удалить поле</button></div>
         </form>
         <div class="panel-footer"><span class="footer-dot"></span> Поля синхронизируются с Supabase</div>
@@ -69,4 +90,3 @@
   <script src="app.js"></script>
 </body>
 </html>
-

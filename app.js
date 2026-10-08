@@ -43,7 +43,8 @@
     form: $('#field-form'), name: $('#field-name'), area: $('#field-area'),
     crop: $('#field-crop'), variety: $('#field-variety'), year: $('#field-year'),
     yield: $('#field-yield'), note: $('#field-note'), heading: $('#field-card-heading'),
-    caption: $('#field-caption'), save: $('#save-field'), delete: $('#delete-field')
+    caption: $('#field-caption'), save: $('#save-field'), delete: $('#delete-field'),
+    seasonHistory: $('#season-history')
   };
 
   function geodesicRingArea(ring) {
@@ -328,6 +329,7 @@
     ui.caption.textContent = isNew ? 'Черновик — сохраните поле, чтобы оставить его на карте' : 'Данные поля';
     ui.save.textContent = isNew ? 'Сохранить' : 'Сохранить изменения';
     ui.delete.hidden = isNew;
+    ui.seasonHistory.hidden = isNew;
     ui.emptyState.hidden = true;
     ui.form.hidden = false;
   }
@@ -551,4 +553,3 @@
   window.addEventListener('resize', () => map.invalidateSize({ pan: false }));
   window.fieldManagerMap = { map, osmLayer, satelliteLayer, layerControl, fields, fieldsLayer, areaHectares, loadFieldsFromSupabase, renderFieldsList };
 })();
-
