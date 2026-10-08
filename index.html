@@ -15,7 +15,7 @@
       <a class="brand" href="#" aria-label="Менеджер полей — главная"><span class="brand-mark" aria-hidden="true">↗</span><span><strong>Поле</strong><small>МЕНЕДЖЕР</small></span></a>
       <div class="workspace-label"><span class="status-dot"></span> Рабочая карта</div>
       <label class="farm-selector-wrap" for="farm-selector"><span>Хозяйство</span><select id="farm-selector" disabled><option value="">Требуется вход</option></select><span class="farm-role-label" id="farm-role-label" hidden></span></label>
-      <button class="directory-button" id="open-crop-directory" type="button">Справочники</button>
+      <button class="directory-button" id="open-season-dashboard" type="button">Сезон</button><button class="directory-button" id="open-crop-directory" type="button">Справочники</button>
       <button class="user-button auth-control" id="auth-control" type="button" aria-label="Войти">Войти</button>
     </header>
     <main class="workspace">
@@ -103,7 +103,23 @@
     </main>
   <footer class="mobile-footer"><span class="footer-dot"></span> OpenStreetMap · Карта сельхозполей</footer>
   </div>
-  <div class="auth-modal" id="auth-modal" hidden>
+  <div class="season-dashboard-modal" id="season-dashboard-modal" hidden>
+  <section class="season-dashboard-dialog" role="dialog" aria-modal="true" aria-labelledby="season-dashboard-title">
+    <div class="season-dashboard-heading">
+      <div><p class="eyebrow">ПЛАНИРОВАНИЕ</p><h2 id="season-dashboard-title">Сезон хозяйства</h2></div>
+      <button class="season-close" id="season-dashboard-close" type="button" aria-label="Закрыть">×</button>
+    </div>
+    <div class="season-dashboard-controls">
+      <label class="form-field">Год сезона<select id="season-dashboard-year"></select></label>
+      <button class="save-field season-dashboard-refresh" id="season-dashboard-refresh" type="button">Обновить</button>
+    </div>
+    <p class="season-dashboard-message" id="season-dashboard-message" role="status" aria-live="polite" hidden></p>
+    <div class="season-dashboard-summary" id="season-dashboard-summary"></div>
+    <div class="season-dashboard-crops" id="season-dashboard-crops"></div>
+    <div class="season-dashboard-fields" id="season-dashboard-fields"></div>
+  </section>
+</div>
+<div class="auth-modal" id="auth-modal" hidden>
     <section class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-dialog-title">
       <div class="auth-dialog-heading">
         <div><p class="eyebrow">МЕНЕДЖЕР ПОЛЕЙ</p><h2 id="auth-dialog-title">Вход в аккаунт</h2></div>
