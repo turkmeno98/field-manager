@@ -505,19 +505,19 @@ BEGIN
 END;
 $block$;
 
-REVOKE ALL ON FUNCTION private.user_has_farm_role(uuid, text[]) FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION private.user_can_access_field(uuid, text[]) FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION private.user_can_access_season(uuid, text[]) FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION private.season_crop_refs_match_farm(uuid, uuid, uuid, uuid, uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION private.user_has_farm_role(uuid, text[]) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.user_can_access_field(uuid, text[]) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.user_can_access_season(uuid, text[]) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.season_crop_refs_match_farm(uuid, uuid, uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION private.prevent_last_farm_owner_removal() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION private.user_has_farm_role(uuid, text[]) TO authenticated;
 GRANT EXECUTE ON FUNCTION private.user_can_access_field(uuid, text[]) TO authenticated;
 GRANT EXECUTE ON FUNCTION private.user_can_access_season(uuid, text[]) TO authenticated;
 GRANT EXECUTE ON FUNCTION private.season_crop_refs_match_farm(uuid, uuid, uuid, uuid, uuid) TO authenticated;
 
-REVOKE ALL ON FUNCTION public.create_farm_for_current_user(text, text) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.create_farm_for_current_user(text, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.create_farm_for_current_user(text, text) TO authenticated;
-REVOKE ALL ON FUNCTION public.create_field_season(uuid, integer, smallint, text, uuid, uuid, numeric, numeric) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.create_field_season(uuid, integer, smallint, text, uuid, uuid, numeric, numeric) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.create_field_season(uuid, integer, smallint, text, uuid, uuid, numeric, numeric) TO authenticated;
 
 COMMIT;
