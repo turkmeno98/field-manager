@@ -1,0 +1,5 @@
+# Local Supabase public key configuration; never commit project credentials.
+supabase-config.js
+.env
+.env.*
+!.env.example

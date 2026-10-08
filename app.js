@@ -1,8 +1,9 @@
-/* Drawing, geodesic area and browser-local GeoJSON storage for the field manager MVP. */
+/* Drawing, geodesic area and Supabase-backed GeoJSON field records. */
 (() => {
   'use strict';
 
-  const STORAGE_KEY = 'field-manager.geojson.v1';
+  const TABLE = 'fields';
+  const SELECT_COLUMNS = 'id,name,area_ha,crop,variety,year,yield_c_ha,notes,geometry,created_at,updated_at';
   const EARTH_RADIUS_METERS = 6371008.8;
   const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([55.75, 37.62], 5);
   const osmLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -22,6 +23,9 @@
     position: 'topright', collapsed: true, autoZIndex: true, sortLayers: false
   }).addTo(map);
   const fields = new Map();
+  let supabase = null;
+  let isReady = false;
+  let loadInProgress = false;
   let draft = null;
   let selectedId = null;
   let drawHandler = null;
@@ -32,6 +36,7 @@
     layersToggle: $('#layers-toggle'),
     searchToggle: $('#search-toggle'), searchPanel: $('#search-panel'),
     hint: $('#map-hint'), drawBanner: $('#draw-banner'), emptyState: $('#empty-state'),
+    status: $('#sync-status'), statusText: $('.sync-status-text'), retry: $('#retry-sync'),
     form: $('#field-form'), name: $('#field-name'), area: $('#field-area'),
     crop: $('#field-crop'), variety: $('#field-variety'), year: $('#field-year'),
     yield: $('#field-yield'), note: $('#field-note'), heading: $('#field-card-heading'),
@@ -69,26 +74,132 @@
     return { type: 'Feature', properties: { ...properties }, geometry };
   }
 
-  function readStoredFeatures() {
+  function setStatus(message, kind = 'info', retry = false) {
+    ui.statusText.textContent = message;
+    ui.status.className = `sync-status is-${kind}`;
+    ui.status.hidden = !message;
+    ui.retry.hidden = !retry;
+  }
+
+  function formatSupabaseError(error) {
+    const detail = error?.message || error?.details || 'неизвестная ошибка';
+    const code = error?.code ? ` (${error.code})` : '';
+    return `${detail}${code}`;
+  }
+
+  function rowToFeature(row) {
+    let geometry = row.geometry;
+    if (typeof geometry === 'string') geometry = JSON.parse(geometry);
+    if (geometry?.type === 'Feature') geometry = geometry.geometry;
+    if (geometry?.type !== 'Polygon' || !Array.isArray(geometry.coordinates)) {
+      throw new Error(`У поля «${row.name || row.id}» отсутствует корректная GeoJSON Polygon геометрия.`);
+    }
+    return createFeature(geometry, {
+      id: String(row.id), name: row.name || '', crop: row.crop || '', variety: row.variety || '',
+      year: row.year ?? '', yield: row.yield_c_ha ?? '', note: row.notes || ''
+    });
+  }
+
+  function featureToRow(feature, properties = feature.properties) {
+    return {
+      name: properties.name,
+      area_ha: areaHectares(feature.geometry),
+      crop: properties.crop || null,
+      variety: properties.variety || null,
+      year: properties.year === '' || properties.year == null ? null : Number(properties.year),
+      yield_c_ha: properties.yield === '' || properties.yield == null ? null : Number(properties.yield),
+      notes: properties.note || null,
+      geometry: feature.geometry
+    };
+  }
+
+  function renderFeature(feature) {
+    const id = String(feature.properties.id);
+    const layer = makeLayer(feature, id).addTo(fieldsLayer);
+    fields.set(id, { id, feature, layer });
+  }
+
+  function clearRenderedFields() {
+    fieldsLayer.clearLayers();
+    fields.clear();
+    selectedId = null;
+  }
+
+  function setDataActionsEnabled(enabled) {
+    isReady = enabled;
+    ui.add.disabled = !enabled;
+    ui.emptyAdd.disabled = !enabled;
+    ui.myFields.disabled = !enabled;
+  }
+
+  async function loadFieldsFromSupabase() {
+    if (!supabase || loadInProgress) return;
+    loadInProgress = true;
+    setDataActionsEnabled(false);
+    setStatus('Загружаем поля из Supabase…', 'loading');
     try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{"type":"FeatureCollection","features":[]}');
-      if (saved.type !== 'FeatureCollection' || !Array.isArray(saved.features)) return [];
-      return saved.features.filter((feature) => feature?.type === 'Feature' && feature.geometry?.type === 'Polygon');
+      const { data, error } = await supabase.from(TABLE).select(SELECT_COLUMNS).order('created_at', { ascending: false });
+      if (error) throw error;
+      clearRenderedFields();
+      const invalidRows = [];
+      for (const row of data || []) {
+        try { renderFeature(rowToFeature(row)); }
+        catch (error) { invalidRows.push(error.message); }
+      }
+      setDataActionsEnabled(true);
+      if (invalidRows.length) {
+        setStatus(`Загружено ${fields.size} полей. Пропущено записей с ошибочной геометрией: ${invalidRows.length}. ${invalidRows[0]}`, 'error', true);
+      } else {
+        setStatus(fields.size ? `Загружено полей: ${fields.size}` : 'Подключено к Supabase. Полей пока нет.', 'success');
+        window.setTimeout(() => { if (ui.status.classList.contains('is-success')) ui.status.hidden = true; }, 4500);
+      }
+      ui.emptyState.hidden = false;
+      ui.form.hidden = true;
     } catch (error) {
-      console.warn('Не удалось прочитать сохранённые поля:', error);
-      return [];
+      console.error('Ошибка загрузки полей Supabase:', error);
+      setDataActionsEnabled(false);
+      setStatus(`Не удалось загрузить поля: ${formatSupabaseError(error)}. Проверьте ключ, доступ к Data API и RLS-политики таблицы public.fields.`, 'error', true);
+    } finally {
+      loadInProgress = false;
     }
   }
 
-  function persistFields() {
-    const collection = { type: 'FeatureCollection', features: [...fields.values()].map((field) => field.feature) };
+  function initializeSupabase() {
+    const config = window.SUPABASE_CONFIG || {};
+    const url = String(config.url || '').trim();
+    const key = String(config.publishableKey || config.anonKey || '').trim();
+    let legacyRole = '';
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(collection));
-      return true;
+      const payload = key.split('.')[1];
+      if (payload) legacyRole = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))).role || '';
+    } catch { /* Non-JWT publishable keys are checked by their prefix below. */ }
+    const looksLikeServiceKey = key.startsWith('sb_secret_') || legacyRole === 'service_role';
+    if (!url || !key) {
+      setDataActionsEnabled(false);
+      setStatus('Добавьте публичный Supabase publishable/anon key в supabase-config.js, затем перезагрузите страницу.', 'error', false);
+      return;
+    }
+    if (looksLikeServiceKey) {
+      setDataActionsEnabled(false);
+      setStatus('Подключение остановлено: service_role/secret key нельзя использовать в браузере. Укажите только publishable/anon key.', 'error', false);
+      return;
+    }
+    if (!key.startsWith('sb_publishable_') && legacyRole !== 'anon') {
+      setDataActionsEnabled(false);
+      setStatus('Неподдерживаемый ключ. Укажите публичный sb_publishable_… key или legacy anon key из настроек проекта.', 'error', false);
+      return;
+    }
+    if (!window.supabase?.createClient) {
+      setDataActionsEnabled(false);
+      setStatus('Библиотека Supabase не загрузилась. Проверьте интернет и CDN, затем повторите загрузку страницы.', 'error', true);
+      return;
+    }
+    try {
+      supabase = window.supabase.createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+      loadFieldsFromSupabase();
     } catch (error) {
-      console.error('Не удалось сохранить поля в браузере:', error);
-      window.alert('Не удалось сохранить поле в браузере. Проверьте свободное место и настройки хранилища.');
-      return false;
+      setDataActionsEnabled(false);
+      setStatus(`Не удалось настроить Supabase: ${formatSupabaseError(error)}`, 'error', false);
     }
   }
 
@@ -208,36 +319,51 @@
     };
   }
 
-  ui.form.addEventListener('submit', (event) => {
+  ui.form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!ui.form.reportValidity()) return;
-    if (draft) {
-      draft.feature.properties = formProperties(draft.feature.properties);
-      const layer = makeLayer(draft.feature, draft.id).addTo(fieldsLayer);
-      fields.set(draft.id, { id: draft.id, feature: draft.feature, layer });
-      map.removeLayer(draft.layer);
-      selectedId = draft.id;
-      draft = null;
-      updateStyles();
-      if (!persistFields()) {
-        const item = fields.get(selectedId);
-        if (item) fieldsLayer.removeLayer(item.layer);
-        fields.delete(selectedId);
-        selectedId = null;
-        resetCard();
-        return;
-      }
-      fillForm(fields.get(selectedId), false);
+    if (!isReady || !supabase) {
+      setStatus('Нет соединения с Supabase. Поле не сохранено; повторите загрузку и попробуйте снова.', 'error', true);
       return;
     }
-    const field = fields.get(selectedId);
+    const isNew = Boolean(draft);
+    const field = isNew ? draft : fields.get(selectedId);
     if (!field) return;
-    field.feature.properties = formProperties(field.feature.properties);
-    field.layer.remove();
-    field.layer = makeLayer(field.feature, field.id).addTo(fieldsLayer);
-    updateStyles();
-    persistFields();
-    fillForm(field, false);
+    const properties = formProperties(field.feature.properties);
+    const payload = featureToRow(field.feature, properties);
+    ui.save.disabled = true;
+    ui.delete.disabled = true;
+    setStatus(isNew ? 'Сохраняем новое поле в Supabase…' : 'Сохраняем изменения в Supabase…', 'loading');
+    try {
+      let query = isNew
+        ? supabase.from(TABLE).insert(payload)
+        : supabase.from(TABLE).update(payload).eq('id', field.id);
+      const { data, error } = await query.select(SELECT_COLUMNS).single();
+      if (error) throw error;
+      const savedFeature = rowToFeature(data);
+      if (isNew) {
+        const savedId = String(data.id);
+        const savedLayer = makeLayer(savedFeature, savedId).addTo(fieldsLayer);
+        map.removeLayer(draft.layer);
+        fields.set(savedId, { id: savedId, feature: savedFeature, layer: savedLayer });
+        draft = null;
+        selectedId = savedId;
+      } else {
+        field.layer.remove();
+        field.feature = savedFeature;
+        field.layer = makeLayer(savedFeature, field.id).addTo(fieldsLayer);
+      }
+      updateStyles();
+      fillForm(fields.get(selectedId), false);
+      setStatus(isNew ? 'Поле сохранено в Supabase.' : 'Изменения сохранены в Supabase.', 'success');
+      window.setTimeout(() => { if (ui.status.classList.contains('is-success')) ui.status.hidden = true; }, 3500);
+    } catch (error) {
+      console.error('Ошибка сохранения поля Supabase:', error);
+      setStatus(`Не удалось сохранить поле: ${formatSupabaseError(error)}. Проверьте разрешения INSERT/UPDATE и RLS-политики.`, 'error', true);
+    } finally {
+      ui.save.disabled = false;
+      ui.delete.disabled = false;
+    }
   });
 
   function resetCard() {
@@ -250,29 +376,37 @@
     else { selectedId = null; updateStyles(); resetCard(); }
   }
 
-  function deleteSelectedField() {
+  async function deleteSelectedField() {
     const field = fields.get(selectedId);
     if (!field) return;
     if (!window.confirm(`Удалить «${field.feature.properties.name || 'Поле'}»? Это действие нельзя отменить.`)) return;
-    fieldsLayer.removeLayer(field.layer);
-    fields.delete(selectedId);
-    selectedId = null;
-    persistFields();
-    resetCard();
-  }
-
-  function loadFields() {
-    for (const feature of readStoredFeatures()) {
-      const id = String(feature.properties?.id || `field-${nextFieldNumber}`);
-      feature.properties = { name: `Поле ${nextFieldNumber}`, crop: '', variety: '', year: '', yield: '', note: '', ...feature.properties, id };
-      const layer = makeLayer(feature, id).addTo(fieldsLayer);
-      fields.set(id, { id, feature, layer });
-      nextFieldNumber += 1;
+    if (!isReady || !supabase) {
+      setStatus('Нет соединения с Supabase. Поле не удалено.', 'error', true);
+      return;
+    }
+    const deletedId = selectedId;
+    ui.delete.disabled = true;
+    setStatus('Удаляем поле из Supabase…', 'loading');
+    try {
+      const { data, error } = await supabase.from(TABLE).delete().eq('id', deletedId).select('id').single();
+      if (error) throw error;
+      if (!data) throw new Error('Запись не найдена или удаление запрещено политикой доступа.');
+      fieldsLayer.removeLayer(field.layer);
+      fields.delete(deletedId);
+      selectedId = null;
+      resetCard();
+      setStatus('Поле удалено из Supabase.', 'success');
+      window.setTimeout(() => { if (ui.status.classList.contains('is-success')) ui.status.hidden = true; }, 3500);
+    } catch (error) {
+      console.error('Ошибка удаления поля Supabase:', error);
+      setStatus(`Не удалось удалить поле: ${formatSupabaseError(error)}. Проверьте разрешение DELETE и RLS-политику.`, 'error', true);
+    } finally {
+      ui.delete.disabled = false;
     }
   }
 
-  ui.add.addEventListener('click', startDrawing);
-  ui.emptyAdd.addEventListener('click', startDrawing);
+  ui.add.addEventListener('click', () => { if (isReady) startDrawing(); });
+  ui.emptyAdd.addEventListener('click', () => { if (isReady) startDrawing(); });
   $('#cancel-field').addEventListener('click', cancelDraft);
   $('#cancel-add').addEventListener('click', () => {
     stopDrawing();
@@ -292,6 +426,7 @@
   });
 
   ui.myFields.addEventListener('click', () => {
+    if (!isReady) return;
     if (!fields.size) {
       ui.emptyState.querySelector('h2').textContent = 'Пока нет добавленных полей';
       ui.emptyState.querySelector('p').textContent = 'Нажмите «Добавить поле» и обведите границу на карте.';
@@ -324,7 +459,9 @@
     input.setCustomValidity('');
   });
 
-  loadFields();
+  ui.retry.addEventListener('click', loadFieldsFromSupabase);
+  setDataActionsEnabled(false);
+  initializeSupabase();
   window.addEventListener('resize', () => map.invalidateSize({ pan: false }));
-  window.fieldManagerMap = { map, osmLayer, satelliteLayer, layerControl, fields, fieldsLayer, areaHectares };
+  window.fieldManagerMap = { map, osmLayer, satelliteLayer, layerControl, fields, fieldsLayer, areaHectares, loadFieldsFromSupabase };
 })();

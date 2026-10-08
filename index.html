@@ -25,8 +25,9 @@
         </div>
         <form class="floating-panel search-panel" id="search-panel" hidden role="search"><label for="map-search">Найти место на карте</label><div class="search-row"><input id="map-search" type="search" placeholder="Например, Казань" autocomplete="off"><button type="submit">Найти</button></div><small>Поиск по адресу будет подключён позже.</small></form>
         <div id="map" aria-label="Интерактивная карта OpenStreetMap"></div>
+        <div class="sync-status is-loading" id="sync-status" role="status" aria-live="polite"><span class="sync-status-text">Подключаемся к Supabase…</span><button id="retry-sync" type="button" hidden>Повторить</button></div>
         <div class="map-hint" id="map-hint"><span class="hint-icon">i</span><span>Карта готова к работе. Добавьте поле, чтобы отметить его на карте.</span><button type="button" aria-label="Закрыть подсказку" id="dismiss-hint">×</button></div>
-        <div class="draw-banner" id="draw-banner" hidden>Нажмите на карту, чтобы поставить метку поля <button id="cancel-add" type="button">Отмена</button></div>
+        <div class="draw-banner" id="draw-banner" hidden>Кликайте, чтобы обвести границу; двойной щелчок завершит поле <button id="cancel-add" type="button">Отмена</button></div>
       </section>
       <aside class="details-panel" aria-labelledby="details-title">
         <div class="panel-heading"><div><p class="eyebrow">ИНФОРМАЦИЯ</p><h1 id="details-title">Выбранное поле</h1></div><span class="panel-menu" aria-hidden="true">···</span></div>
@@ -45,13 +46,15 @@
           <label class="form-field">Примечание<textarea id="field-note" name="note" rows="3" maxlength="1000" placeholder="Дополнительная информация"></textarea></label>
           <div class="form-actions"><button class="save-field" id="save-field" type="submit">Сохранить</button><button class="cancel-field" id="cancel-field" type="button">Отмена</button><button class="delete-field" id="delete-field" type="button" hidden>Удалить поле</button></div>
         </form>
-        <div class="panel-footer"><span class="footer-dot"></span> Данные хранятся только в этой сессии</div>
+        <div class="panel-footer"><span class="footer-dot"></span> Поля синхронизируются с Supabase</div>
       </aside>
     </main>
     <footer class="mobile-footer"><span class="footer-dot"></span> OpenStreetMap · Карта сельхозполей</footer>
   </div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="supabase-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
