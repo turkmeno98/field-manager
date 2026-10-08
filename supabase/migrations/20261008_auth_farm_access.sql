@@ -19,6 +19,68 @@ CREATE TABLE public.farm_members (
 
 CREATE INDEX farm_members_user_id_idx ON public.farm_members (user_id, farm_id);
 
+-- Serialize owner removals/demotions on the parent farm row so concurrent
+-- changes cannot remove the last owner at the same time.
+CREATE OR REPLACE FUNCTION private.prevent_last_farm_owner_removal()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  v_remaining_owners bigint;
+BEGIN
+  IF TG_OP = 'UPDATE'
+     AND OLD.role <> 'owner' THEN
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'DELETE' AND OLD.role <> 'owner' THEN
+    RETURN OLD;
+  END IF;
+
+  IF TG_OP = 'UPDATE'
+     AND NEW.farm_id = OLD.farm_id
+     AND NEW.role = 'owner' THEN
+    RETURN NEW;
+  END IF;
+
+  -- During ON DELETE CASCADE the parent farm is already absent to this
+  -- trigger; deleting the whole farm must remain possible.
+  PERFORM 1
+  FROM public.farms AS f
+  WHERE f.id = OLD.farm_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    IF TG_OP = 'DELETE' THEN
+      RETURN OLD;
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  SELECT count(*)
+  INTO v_remaining_owners
+  FROM public.farm_members AS fm
+  WHERE fm.farm_id = OLD.farm_id
+    AND fm.role = 'owner'
+    AND fm.id <> OLD.id;
+
+  IF v_remaining_owners = 0 THEN
+    RAISE EXCEPTION 'Нельзя удалить или понизить последнего владельца хозяйства'
+      USING ERRCODE = '23514', CONSTRAINT = 'farm_members_last_owner_check';
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$function$;
+
+CREATE TRIGGER farm_members_preserve_last_owner
+BEFORE UPDATE OR DELETE ON public.farm_members
+FOR EACH ROW EXECUTE FUNCTION private.prevent_last_farm_owner_removal();
+
 CREATE OR REPLACE FUNCTION private.user_has_farm_role(
   p_farm_id uuid,
   p_roles text[] DEFAULT NULL
@@ -349,9 +411,6 @@ DROP POLICY IF EXISTS field_seasons_select_member ON public.field_seasons;
 CREATE POLICY field_seasons_select_member ON public.field_seasons
   FOR SELECT TO authenticated USING (private.user_can_access_field(field_id));
 DROP POLICY IF EXISTS field_seasons_insert_operator ON public.field_seasons;
-CREATE POLICY field_seasons_insert_operator ON public.field_seasons
-  FOR INSERT TO authenticated
-  WITH CHECK (private.user_can_access_field(field_id, ARRAY['operator', 'agronomist', 'manager', 'owner']));
 DROP POLICY IF EXISTS field_seasons_update_operator ON public.field_seasons;
 CREATE POLICY field_seasons_update_operator ON public.field_seasons
   FOR UPDATE TO authenticated
@@ -421,13 +480,36 @@ REVOKE ALL PRIVILEGES ON TABLE
 FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
   public.farms, public.farm_members, public.fields, public.crops, public.varieties,
-  public.field_seasons, public.season_crops, public.field_operations, public.field_notes
+  public.season_crops, public.field_operations, public.field_notes
 TO authenticated;
+GRANT SELECT, UPDATE, DELETE ON TABLE public.field_seasons TO authenticated;
+
+-- Also clear any pre-existing column-level grants: they can independently
+-- authorize INSERT even when table-level INSERT is revoked.
+DO $block$
+DECLARE
+  v_column name;
+BEGIN
+  FOR v_column IN
+    SELECT a.attname
+    FROM pg_catalog.pg_attribute AS a
+    WHERE a.attrelid = 'public.field_seasons'::regclass
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+  LOOP
+    EXECUTE pg_catalog.format(
+      'REVOKE INSERT (%I) ON TABLE public.field_seasons FROM PUBLIC, anon, authenticated',
+      v_column
+    );
+  END LOOP;
+END;
+$block$;
 
 REVOKE ALL ON FUNCTION private.user_has_farm_role(uuid, text[]) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION private.user_can_access_field(uuid, text[]) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION private.user_can_access_season(uuid, text[]) FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION private.season_crop_refs_match_farm(uuid, uuid, uuid, uuid, uuid) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION private.prevent_last_farm_owner_removal() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION private.user_has_farm_role(uuid, text[]) TO authenticated;
 GRANT EXECUTE ON FUNCTION private.user_can_access_field(uuid, text[]) TO authenticated;
 GRANT EXECUTE ON FUNCTION private.user_can_access_season(uuid, text[]) TO authenticated;
