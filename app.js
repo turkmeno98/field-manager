@@ -831,7 +831,7 @@
     ui.add.disabled = !enabled;
     ui.emptyAdd.disabled = !enabled;
     ui.myFields.disabled = !enabled;
-    if (ui.cropDirectory) ui.cropDirectory.disabled = !enabled || !activeFarmId;
+    if (ui.cropDirectory) ui.cropDirectory.disabled = false;
     ui.seasonAdd.disabled = !enabled || !selectedId;
   }
   
