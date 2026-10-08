@@ -2,6 +2,26 @@
 (() => {
   'use strict';
 
+  window.addEventListener('error', (event) => {
+    const message = event?.error?.message || event?.message || 'Неизвестная ошибка JavaScript';
+    console.error('Глобальная ошибка приложения:', event?.error || event);
+    if (ui?.statusText) {
+      ui.statusText.textContent = `Ошибка запуска приложения: ${message}`;
+      ui.status.className = 'sync-status is-error';
+      ui.status.hidden = false;
+    }
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event?.reason;
+    const message = reason?.message || String(reason || 'Неизвестная ошибка Promise');
+    console.error('Необработанная ошибка Promise:', reason);
+    if (ui?.statusText) {
+      ui.statusText.textContent = `Ошибка Supabase/Auth: ${message}`;
+      ui.status.className = 'sync-status is-error';
+      ui.status.hidden = false;
+    }
+  });
+
   const TABLE = 'fields';
   const SELECT_COLUMNS = 'id,farm_id,name,area_ha,crop,variety,year,yield_c_ha,notes,geometry,created_at,updated_at';
   const EARTH_RADIUS_METERS = 6371008.8;
@@ -1178,7 +1198,11 @@
       supabase.auth.onAuthStateChange((event, session) => {
         window.setTimeout(() => { void handleAuthStateChange(event, session); }, 0);
       });
-      const { data, error } = await supabase.auth.getSession();
+      const sessionResult = await Promise.race([
+        supabase.auth.getSession(),
+        new Promise((_, reject) => window.setTimeout(() => reject(new Error('Supabase Auth не ответил за 15 секунд. Проверьте доступ к Supabase и интернет-соединение.')), 15000))
+      ]);
+      const { data, error } = sessionResult;
       if (error) throw error;
       await handleAuthStateChange('INITIAL_SESSION', data.session);
     } catch (error) {
