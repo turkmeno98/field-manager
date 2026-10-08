@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f6f7f2"><meta name="description" content="Менеджер полей — карта и учёт сельскохозяйственных полей.">
+  <title>Менеджер полей</title>
+  <link rel="preconnect" href="https://unpkg.com"><link rel="preconnect" href="https://{s}.tile.openstreetmap.org">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Менеджер полей — главная"><span class="brand-mark" aria-hidden="true">↗</span><span><strong>Поле</strong><small>МЕНЕДЖЕР</small></span></a>
+      <div class="workspace-label"><span class="status-dot"></span> Рабочая карта</div><button class="user-button" type="button" aria-label="Профиль пользователя">АГ</button>
+    </header>
+    <main class="workspace">
+      <section class="map-section" aria-label="Карта сельскохозяйственных полей">
+        <div class="map-toolbar" role="toolbar" aria-label="Управление картой">
+          <button class="tool-button primary" id="add-field" type="button"><span aria-hidden="true">＋</span>Добавить поле</button>
+          <button class="tool-button" id="my-fields" type="button"><span aria-hidden="true">▤</span>Мои поля</button>
+          <button class="tool-button" id="layers-toggle" type="button" aria-expanded="false"><span aria-hidden="true">◫</span>Слои</button>
+          <button class="tool-button" id="search-toggle" type="button" aria-expanded="false"><span aria-hidden="true">⌕</span>Поиск</button>
+        </div>
+        <div class="floating-panel layers-panel" id="layers-panel" hidden><strong>Слои карты</strong><label class="layer-option"><input type="radio" name="map-layer" checked disabled> OpenStreetMap <span class="layer-tag">Базовый</span></label><label class="layer-option disabled"><input type="radio" name="map-layer" disabled> Спутниковые снимки <span class="layer-tag">Позже</span></label></div>
+        <form class="floating-panel search-panel" id="search-panel" hidden role="search"><label for="map-search">Найти место на карте</label><div class="search-row"><input id="map-search" type="search" placeholder="Например, Казань" autocomplete="off"><button type="submit">Найти</button></div><small>Поиск по адресу будет подключён позже.</small></form>
+        <div id="map" aria-label="Интерактивная карта OpenStreetMap"></div>
+        <div class="map-hint" id="map-hint"><span class="hint-icon">i</span><span>Карта готова к работе. Добавьте поле, чтобы отметить его на карте.</span><button type="button" aria-label="Закрыть подсказку" id="dismiss-hint">×</button></div>
+        <div class="draw-banner" id="draw-banner" hidden>Нажмите на карту, чтобы поставить метку поля <button id="cancel-add" type="button">Отмена</button></div>
+      </section>
+      <aside class="details-panel" aria-labelledby="details-title">
+        <div class="panel-heading"><div><p class="eyebrow">ИНФОРМАЦИЯ</p><h1 id="details-title">Выбранное поле</h1></div><span class="panel-menu" aria-hidden="true">···</span></div>
+        <div class="empty-state" id="empty-state"><div class="empty-illustration" aria-hidden="true"><span class="field-line line-one"></span><span class="field-line line-two"></span><span class="field-line line-three"></span><span class="pin">＋</span></div><h2>Пока нет выбранного поля</h2><p>Выберите поле на карте или добавьте новое, чтобы увидеть его информацию здесь.</p><button class="text-action" id="empty-add-field" type="button">＋ Добавить поле</button></div>
+        <div class="field-info" id="field-info" hidden><div class="field-title-row"><span class="field-color"></span><h2 id="field-name">Новое поле</h2><button id="clear-selection" type="button" aria-label="Снять выбор">×</button></div><p class="field-caption">Черновик поля</p><div class="info-divider"></div><dl class="field-properties"><div><dt>Координаты метки</dt><dd id="field-coordinates">—</dd></div><div><dt>Площадь</dt><dd>—</dd></div><div><dt>Культура</dt><dd>—</dd></div></dl><p class="draft-note">Чтобы измерять площадь, добавьте контур поля. Редактирование полигонов появится на следующем этапе.</p></div>
+        <div class="panel-footer"><span class="footer-dot"></span> Данные хранятся только в этой сессии</div>
+      </aside>
+    </main>
+    <footer class="mobile-footer"><span class="footer-dot"></span> OpenStreetMap · Карта сельхозполей</footer>
+  </div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script><script src="app.js"></script>
+</body>
+</html>
