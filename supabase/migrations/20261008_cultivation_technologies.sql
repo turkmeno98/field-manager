@@ -3,11 +3,6 @@
 -- No seed data is included until the source technology chart and target farm are verified.
 BEGIN;
 
--- Supporting unique index for a composite FK that keeps a technology's crop
--- in the same farm, even if crop.farm_id is later updated.
-CREATE UNIQUE INDEX IF NOT EXISTS cultivation_technologies_crops_farm_id_uidx
-  ON public.crops (farm_id, id);
-
 CREATE TABLE public.cultivation_technologies (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   farm_id uuid NOT NULL REFERENCES public.farms(id) ON DELETE CASCADE,
@@ -18,8 +13,10 @@ CREATE TABLE public.cultivation_technologies (
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT cultivation_technologies_crop_farm_fk FOREIGN KEY (farm_id, crop_id)
-    REFERENCES public.crops(farm_id, id) ON DELETE RESTRICT,
+  -- Reuse the existing UNIQUE (id, farm_id) key on crops. No changes to crops
+  -- are needed, and the composite FK prevents cross-farm crop references.
+  CONSTRAINT cultivation_technologies_crop_farm_fk FOREIGN KEY (crop_id, farm_id)
+    REFERENCES public.crops(id, farm_id) ON DELETE RESTRICT,
   CONSTRAINT cultivation_technologies_name_nonempty CHECK (length(btrim(name)) > 0),
   CONSTRAINT cultivation_technologies_year_range CHECK (year IS NULL OR year BETWEEN 1900 AND 2200)
 );
@@ -34,6 +31,8 @@ CREATE UNIQUE INDEX cultivation_technologies_farm_crop_name_no_year_uidx
   WHERE year IS NULL;
 CREATE INDEX cultivation_technologies_farm_year_idx
   ON public.cultivation_technologies (farm_id, year, crop_id);
+CREATE INDEX cultivation_technologies_crop_farm_idx
+  ON public.cultivation_technologies (crop_id, farm_id);
 
 CREATE TABLE public.technology_operations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -256,3 +255,4 @@ TO authenticated;
 REVOKE ALL ON FUNCTION private.touch_cultivation_technology_updated_at() FROM PUBLIC, anon, authenticated;
 
 COMMIT;
+
