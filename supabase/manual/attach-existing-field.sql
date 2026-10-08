@@ -1,0 +1,11 @@
+-- MANUAL ONLY. Do not run until an owner has created the intended farm and
+-- you have verified its UUID. This file is deliberately not included in the
+-- Auth/access migration and does not run automatically.
+-- The existing field remains farm_id = NULL until you uncomment and complete
+-- the statement below with your real farm UUID.
+
+-- UPDATE public.fields
+-- SET farm_id = 'REPLACE_WITH_VERIFIED_FARM_UUID'::uuid
+-- WHERE id = '8f4be941-1ba2-4d5c-a475-6fb34c6539d7'::uuid
+--   AND farm_id IS NULL
+-- RETURNING id, name, farm_id, geometry ->> 'type' AS geometry_type;

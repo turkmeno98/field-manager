@@ -3,7 +3,7 @@
   'use strict';
 
   const TABLE = 'fields';
-  const SELECT_COLUMNS = 'id,name,area_ha,crop,variety,year,yield_c_ha,notes,geometry,created_at,updated_at';
+  const SELECT_COLUMNS = 'id,farm_id,name,area_ha,crop,variety,year,yield_c_ha,notes,geometry,created_at,updated_at';
   const EARTH_RADIUS_METERS = 6371008.8;
   const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([55.75, 37.62], 5);
   const osmLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -25,6 +25,11 @@
   const fields = new Map();
   let supabase = null;
   let isReady = false;
+  let authenticatedUser = null;
+  let currentSession = null;
+  let lastAuthEvent = 'INITIAL_SESSION';
+  let farms = [];
+  let activeFarmId = null;
   let loadInProgress = false;
   let draft = null;
   let selectedId = null;
@@ -37,6 +42,7 @@
   let seasonHistoryRequest = 0;
   const $ = (selector) => document.querySelector(selector);
   const ui = {
+    farmSelector: $('#farm-selector'),
     add: $('#add-field'), emptyAdd: $('#empty-add-field'), myFields: $('#my-fields'),
     layersToggle: $('#layers-toggle'),
     fieldsListView: $('#fields-list-view'), fieldsDetailsView: $('#field-details-view'),
@@ -105,14 +111,60 @@
     return error?.code === '42501' || /permission denied|row-level security|violates row.level security/i.test(error?.message || '');
   }
 
-  function createUuid() {
-    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
-    const bytes = new Uint8Array(16);
-    window.crypto.getRandomValues(bytes);
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  async function getCurrentUser() {
+    if (!supabase) return null;
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw error;
+    return data.user || null;
+  }
+
+  async function requireUser() {
+    try {
+      const user = await getCurrentUser();
+      if (user) return user;
+      setDataActionsEnabled(false);
+      setStatus('Требуется вход. Авторизуйтесь, чтобы открыть хозяйства и поля.', 'info', false);
+      return null;
+    } catch (error) {
+      setDataActionsEnabled(false);
+      setStatus(`Не удалось проверить сессию: ${formatSupabaseError(error)}. Требуется действующая сессия Supabase Auth.`, 'error', false);
+      return null;
+    }
+  }
+
+  async function handleAuthStateChange(event, session) {
+    const nextUser = session?.user || null;
+    const previousId = authenticatedUser?.id || null;
+    currentSession = session || null;
+    lastAuthEvent = event;
+    authenticatedUser = nextUser;
+    if (!nextUser) {
+      if (previousId || event === 'SIGNED_OUT' || event === 'INITIAL_SESSION') {
+        setDataActionsEnabled(false);
+        farms = [];
+        activeFarmId = null;
+        ui.farmSelector.replaceChildren(new Option('Требуется вход', ''));
+        ui.farmSelector.disabled = true;
+        clearRenderedFields();
+        selectedId = null;
+        draft = null;
+        resetCard();
+        renderFieldsList();
+        setStatus('Требуется вход. Авторизуйтесь, чтобы открыть хозяйства и поля.', 'info', false);
+      }
+      return;
+    }
+    if (previousId && previousId !== nextUser.id) {
+      farms = [];
+      activeFarmId = null;
+      ui.farmSelector.replaceChildren(new Option('Загружаем хозяйства…', ''));
+      ui.farmSelector.disabled = true;
+      clearRenderedFields();
+      resetCard();
+    }
+    if (event === 'SIGNED_IN' || previousId !== nextUser.id || !isReady) {
+      await loadFieldsFromSupabase();
+    }
   }
 
   function showSeasonFormMessage(message, kind = 'info') {
@@ -132,7 +184,7 @@
   function showSeasonReadError(error, table) {
     const detail = formatSupabaseError(error);
     const policy = isRlsError(error)
-      ? ` Для чтения нужна RLS-policy SELECT на public.${table} для используемой роли (сейчас клиент работает как anon).`
+      ? ` Проверьте наличие членства в хозяйстве и RLS-policy SELECT для роли authenticated на public.${table}.`
       : '';
     ui.seasonList.replaceChildren();
     const item = document.createElement('p');
@@ -144,6 +196,7 @@
 
   async function loadSeasonHistory(fieldId) {
     if (!supabase || !fieldId) return false;
+    if (!await requireUser()) return false;
     const requestId = ++seasonHistoryRequest;
     ui.seasonLoading.hidden = false;
     ui.seasonList.replaceChildren();
@@ -162,7 +215,7 @@
       }
 
       const seasonIds = seasons.map((season) => season.id);
-      const cropsResult = await supabase.from('season_crops').select('*').in('field_season_id', seasonIds)
+      const cropsResult = await supabase.from('season_crops').select('*').in('season_id', seasonIds)
         .order('sequence_no', { ascending: true });
       if (cropsResult.error) throw Object.assign(cropsResult.error, { tableName: 'season_crops' });
       const cropRows = cropsResult.data || [];
@@ -185,7 +238,7 @@
       const template = $('#season-item-template');
       const fragment = document.createDocumentFragment();
       for (const season of seasons) {
-        const entries = cropRows.filter((row) => String(row.field_season_id) === String(season.id));
+        const entries = cropRows.filter((row) => String(row.season_id) === String(season.id));
         for (const entry of entries.length ? entries : [null]) {
           const item = template.content.firstElementChild.cloneNode(true);
           item.querySelector('[data-season-year]').textContent = season.season_year ?? '—';
@@ -211,7 +264,7 @@
   async function loadSeasonCrops() {
     ui.seasonCrop.replaceChildren(new Option('Загрузка культур…', ''));
     ui.seasonCrop.disabled = true;
-    const { data, error } = await supabase.from('crops').select('*');
+    const { data, error } = await supabase.from('crops').select('*').eq('farm_id', activeFarmId);
     if (error) throw Object.assign(error, { tableName: 'crops' });
     seasonCrops = (data || []).filter((row) => row.is_active !== false)
       .sort((a, b) => referenceName(a).localeCompare(referenceName(b), 'ru'));
@@ -223,7 +276,7 @@
     }
     ui.seasonCrop.disabled = seasonCrops.length === 0;
     if (!seasonCrops.length) {
-      showSeasonFormMessage('Список культур пуст или чтение ограничено RLS. Проверьте справочник public.crops и право SELECT для роли anon.', 'error');
+      showSeasonFormMessage('Список культур пуст или чтение ограничено RLS. Проверьте доступ к хозяйству и справочник public.crops.', 'error');
     } else {
       showSeasonFormMessage('');
     }
@@ -237,7 +290,7 @@
       ui.seasonVariety.replaceChildren(new Option('Сначала выберите культуру', ''));
       return;
     }
-    const { data, error } = await supabase.from('varieties').select('*').eq('crop_id', cropId);
+    const { data, error } = await supabase.from('varieties').select('*').eq('farm_id', activeFarmId).eq('crop_id', cropId);
     if (error) throw Object.assign(error, { tableName: 'varieties' });
     seasonVarieties = (data || []).filter((row) => row.is_active !== false)
       .sort((a, b) => referenceName(a).localeCompare(referenceName(b), 'ru'));
@@ -251,6 +304,7 @@
 
   async function openSeasonForm() {
     if (!selectedId || !fields.has(selectedId) || !isReady || !supabase) return;
+    if (!await requireUser()) return;
     ui.seasonForm.reset();
     ui.seasonYear.value = String(new Date().getFullYear());
     ui.seasonStatus.value = 'planned';
@@ -260,12 +314,12 @@
     showSeasonFormMessage('');
     try {
       await loadSeasonCrops();
-      ui.seasonSave.disabled = seasonCrops.length === 0;
+      ui.seasonSave.disabled = seasonCrops.length === 0 || !isReady;
       ui.seasonYear.focus();
     } catch (error) {
       console.error('Ошибка загрузки культур:', error);
       const detail = formatSupabaseError(error);
-      const policy = isRlsError(error) ? ' Нужна RLS-policy SELECT на public.crops для роли anon.' : '';
+      const policy = isRlsError(error) ? ' Проверьте членство и RLS-policy SELECT для authenticated на public.crops.' : '';
       showSeasonFormMessage(`Не удалось загрузить культуры: ${detail}.${policy}`, 'error');
       setStatus(`Ошибка чтения public.crops: ${detail}.${policy}`, 'error', false);
       ui.seasonCrop.replaceChildren(new Option('Культуры недоступны', ''));
@@ -300,9 +354,10 @@
     ui.seasonSave.disabled = true;
     showSeasonFormMessage('Проверяем сезон и сохраняем…');
     setStatus('Сохраняем сезон в Supabase…', 'loading');
-    let createdSeason = null;
     let operation = 'SELECT';
     try {
+      const user = await requireUser();
+      if (!user) return;
       const duplicateResult = await supabase.from('field_seasons').select('id').eq('field_id', fieldId)
         .eq('season_year', year).limit(1);
       if (duplicateResult.error) throw Object.assign(duplicateResult.error, { tableName: 'field_seasons' });
@@ -312,33 +367,19 @@
         return;
       }
 
-      const seasonId = createUuid();
-      operation = 'INSERT';
-      const seasonResult = await supabase.from('field_seasons').insert({
-        id: seasonId, field_id: fieldId, season_year: year, season_no: 1, status
+      operation = 'RPC';
+      const { data: seasonId, error } = await supabase.rpc('create_field_season', {
+        p_field_id: fieldId,
+        p_season_year: year,
+        p_season_no: 1,
+        p_status: status,
+        p_planned_crop_id: crop.id,
+        p_planned_variety_id: varietyId,
+        p_planned_yield_c_ha: ui.seasonPlannedYield.value === '' ? null : Number(ui.seasonPlannedYield.value),
+        p_actual_yield_c_ha: ui.seasonActualYield.value === '' ? null : Number(ui.seasonActualYield.value)
       });
-      if (seasonResult.error) throw Object.assign(seasonResult.error, { tableName: 'field_seasons' });
-      createdSeason = { id: seasonId };
-
-      const cropResult = await supabase.from('season_crops').insert({
-        field_season_id: createdSeason.id,
-        sequence_no: 1,
-        planned_crop_id: crop.id,
-        planned_variety_id: varietyId,
-        planned_yield_c_ha: ui.seasonPlannedYield.value === '' ? null : Number(ui.seasonPlannedYield.value),
-        actual_yield_c_ha: ui.seasonActualYield.value === '' ? null : Number(ui.seasonActualYield.value),
-        status: 'planned'
-      });
-      if (cropResult.error) {
-        if (isRlsError(cropResult.error)) {
-          throw Object.assign(cropResult.error, { tableName: 'season_crops' });
-        }
-        let cleanupNote = '';
-        const cleanup = await supabase.from('field_seasons').delete().eq('id', createdSeason.id).select('id');
-        if (cleanup.error || !cleanup.data?.length) cleanupNote = ` Не удалось подтвердить удаление незавершённой записи сезона${cleanup.error ? `: ${formatSupabaseError(cleanup.error)}` : ' (DELETE не вернул строку)'}.`;
-        const error = Object.assign(cropResult.error, { tableName: 'season_crops', cleanupNote });
-        throw error;
-      }
+      if (error) throw Object.assign(error, { tableName: 'create_field_season' });
+      if (!seasonId) throw new Error('RPC не вернула id созданного сезона.');
 
       ui.seasonModal.hidden = true;
       const refreshed = await loadSeasonHistory(fieldId);
@@ -355,15 +396,16 @@
         setStatus(message, 'error');
         return;
       }
-      const table = error.tableName || (createdSeason ? 'season_crops' : 'field_seasons');
-      const policy = isRlsError(error) ? ` Нужна RLS-policy ${operation} на public.${table} для роли anon.` : '';
-      const cleanupNote = error.cleanupNote || '';
+      const table = error.tableName || 'field_seasons';
+      const policy = isRlsError(error)
+        ? (operation === 'RPC' ? ' Проверьте GRANT EXECUTE для authenticated на RPC и членство в хозяйстве.' : ` Проверьте членство и RLS-policy ${operation} для authenticated на public.${table}.`)
+        : '';
       const action = operation === 'SELECT' ? 'прочитать' : 'записать';
-      showSeasonFormMessage(`Не удалось ${action} public.${table}: ${detail}.${policy}${cleanupNote}`, 'error');
-      setStatus(`Ошибка ${operation} public.${table}: ${detail}.${policy}${cleanupNote}`, 'error', false);
+      showSeasonFormMessage(`Не удалось ${action} ${table === 'create_field_season' ? 'сезон через RPC' : `public.${table}`}: ${detail}.${policy}`, 'error');
+      setStatus(`Ошибка ${operation} ${table === 'create_field_season' ? 'public.create_field_season' : `public.${table}`}: ${detail}.${policy}`, 'error', false);
     } finally {
       seasonSaving = false;
-      ui.seasonSave.disabled = seasonCrops.length === 0;
+      ui.seasonSave.disabled = seasonCrops.length === 0 || !isReady || seasonLookupBlocked;
     }
   }
 
@@ -375,13 +417,14 @@
       throw new Error(`У поля «${row.name || row.id}» отсутствует корректная GeoJSON Polygon геометрия.`);
     }
     return createFeature(geometry, {
-      id: String(row.id), name: row.name || '', crop: row.crop || '', variety: row.variety || '',
+      id: String(row.id), farmId: row.farm_id || null, name: row.name || '', crop: row.crop || '', variety: row.variety || '',
       year: row.year ?? '', yield: row.yield_c_ha ?? '', note: row.notes || ''
     });
   }
 
   function featureToRow(feature, properties = feature.properties) {
     return {
+      farm_id: properties.farmId || activeFarmId,
       name: properties.name,
       area_ha: areaHectares(feature.geometry),
       crop: properties.crop || null,
@@ -493,16 +536,51 @@
     ui.add.disabled = !enabled;
     ui.emptyAdd.disabled = !enabled;
     ui.myFields.disabled = !enabled;
+    ui.seasonAdd.disabled = !enabled || !selectedId;
+  }
+
+  async function loadAccessibleFarms() {
+    const { data, error } = await supabase.from('farms').select('id,name').order('name', { ascending: true });
+    if (error) throw error;
+    farms = data || [];
+    ui.farmSelector.replaceChildren(new Option(farms.length ? 'Выберите хозяйство' : 'Нет доступных хозяйств', ''));
+    farms.forEach((farm) => ui.farmSelector.add(new Option(farm.name, String(farm.id))));
+    if (!farms.length) {
+      activeFarmId = null;
+      ui.farmSelector.disabled = true;
+      clearRenderedFields();
+      renderFieldsList();
+      setDataActionsEnabled(false);
+      ui.emptyState.hidden = false;
+      ui.form.hidden = true;
+      setStatus('У этой учётной записи пока нет доступных хозяйств. Попросите владельца добавить вас или войдите под другой учётной записью.', 'info');
+      return false;
+    }
+    const selected = farms.some((farm) => String(farm.id) === String(activeFarmId))
+      ? activeFarmId
+      : String(farms[0].id);
+    activeFarmId = String(selected);
+    ui.farmSelector.value = activeFarmId;
+    ui.farmSelector.disabled = false;
+    return true;
   }
 
   async function loadFieldsFromSupabase() {
     if (!supabase || loadInProgress) return;
     loadInProgress = true;
-    setDataActionsEnabled(false);
-    setStatus('Загружаем поля из Supabase…', 'loading');
+    let requestUserId = null;
     try {
-      const { data, error } = await supabase.from(TABLE).select(SELECT_COLUMNS).order('created_at', { ascending: false });
+      const user = await requireUser();
+      if (!user) return;
+      requestUserId = user.id;
+      setDataActionsEnabled(false);
+      setStatus('Загружаем хозяйства и поля…', 'loading');
+      if (!await loadAccessibleFarms()) return;
+      const requestedFarmId = activeFarmId;
+      ui.farmSelector.disabled = true;
+      const { data, error } = await supabase.from(TABLE).select(SELECT_COLUMNS).eq('farm_id', requestedFarmId).order('created_at', { ascending: false });
       if (error) throw error;
+      if (authenticatedUser?.id !== requestUserId || activeFarmId !== requestedFarmId) return;
       clearRenderedFields();
       const invalidRows = [];
       for (const row of data || []) {
@@ -520,17 +598,19 @@
       ui.emptyState.hidden = false;
       ui.form.hidden = true;
     } catch (error) {
+      if (requestUserId && authenticatedUser?.id !== requestUserId) return;
       console.error('Ошибка загрузки полей Supabase:', error);
       setDataActionsEnabled(false);
       const detail = formatSupabaseError(error);
-      const policy = isRlsError(error) ? ' Нужна RLS-policy SELECT на public.fields для роли anon.' : ' Проверьте ключ, доступ к Data API и RLS-политики public.fields.';
+      const policy = isRlsError(error) ? ' Проверьте членство в выбранном хозяйстве и RLS-policy SELECT для authenticated на public.fields.' : ' Проверьте сессию, доступ к Data API и RLS-политики public.fields.';
       setStatus(`Не удалось загрузить поля: ${detail}.${policy}`, 'error', true);
     } finally {
+      ui.farmSelector.disabled = farms.length === 0;
       loadInProgress = false;
     }
   }
 
-  function initializeSupabase() {
+  async function initializeSupabase() {
     const config = window.SUPABASE_CONFIG || {};
     const url = String(config.url || '').trim();
     const key = String(config.publishableKey || config.anonKey || '').trim();
@@ -561,8 +641,13 @@
       return;
     }
     try {
-      supabase = window.supabase.createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
-      loadFieldsFromSupabase();
+      supabase = window.supabase.createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+      supabase.auth.onAuthStateChange((event, session) => {
+        window.setTimeout(() => { void handleAuthStateChange(event, session); }, 0);
+      });
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      await handleAuthStateChange('INITIAL_SESSION', data.session);
     } catch (error) {
       setDataActionsEnabled(false);
       setStatus(`Не удалось настроить Supabase: ${formatSupabaseError(error)}`, 'error', false);
@@ -667,7 +752,7 @@
     stopDrawing();
     const geometry = layer.toGeoJSON().geometry;
     const id = `field-${Date.now()}-${nextFieldNumber}`;
-    const feature = createFeature(geometry, { id, name: `Поле ${nextFieldNumber}`, crop: '', variety: '', year: '', yield: '', note: '' });
+    const feature = createFeature(geometry, { id, farmId: activeFarmId, name: `Поле ${nextFieldNumber}`, crop: '', variety: '', year: '', yield: '', note: '' });
     nextFieldNumber += 1;
     layer.setStyle({ color: '#39734b', weight: 2, dashArray: '7 5', fillColor: '#a9c79e', fillOpacity: 0.25 });
     layer.on('click', () => { if (draft?.id === id) fillForm(draft, true); });
@@ -707,6 +792,8 @@
     ui.delete.disabled = true;
     setStatus(isNew ? 'Сохраняем новое поле в Supabase…' : 'Сохраняем изменения в Supabase…', 'loading');
     try {
+      const user = await requireUser();
+      if (!user) return;
       let query = isNew
         ? supabase.from(TABLE).insert(payload)
         : supabase.from(TABLE).update(payload).eq('id', field.id);
@@ -734,7 +821,7 @@
       console.error('Ошибка сохранения поля Supabase:', error);
       const detail = formatSupabaseError(error);
       const operation = isNew ? 'INSERT' : 'UPDATE';
-      const policy = isRlsError(error) ? ` Нужна RLS-policy ${operation} на public.fields для роли anon.` : ' Проверьте подключение и ограничения таблицы.';
+      const policy = isRlsError(error) ? ` Проверьте членство в хозяйстве и RLS-policy ${operation} для authenticated на public.fields.` : ' Проверьте подключение и ограничения таблицы.';
       setStatus(`Не удалось сохранить поле: ${detail}.${policy}`, 'error', true);
     } finally {
       ui.save.disabled = false;
@@ -765,6 +852,8 @@
     ui.delete.disabled = true;
     setStatus('Удаляем поле из Supabase…', 'loading');
     try {
+      const user = await requireUser();
+      if (!user) return;
       const { data, error } = await supabase.from(TABLE).delete().eq('id', deletedId).select('id').single();
       if (error) throw error;
       if (!data) throw new Error('Запись не найдена или удаление запрещено политикой доступа.');
@@ -778,7 +867,7 @@
     } catch (error) {
       console.error('Ошибка удаления поля Supabase:', error);
       const detail = formatSupabaseError(error);
-      const policy = isRlsError(error) ? ' Нужна RLS-policy DELETE на public.fields для роли anon.' : ' Проверьте подключение и ограничения таблицы.';
+      const policy = isRlsError(error) ? ' Проверьте членство в хозяйстве и RLS-policy DELETE для authenticated на public.fields.' : ' Проверьте подключение и ограничения таблицы.';
       setStatus(`Не удалось удалить поле: ${detail}.${policy}`, 'error', true);
     } finally {
       ui.delete.disabled = false;
@@ -803,11 +892,11 @@
     seasonLookupBlocked = false;
     try {
       await loadSeasonVarieties(ui.seasonCrop.value);
-      ui.seasonSave.disabled = seasonCrops.length === 0;
+      ui.seasonSave.disabled = seasonCrops.length === 0 || !isReady || seasonLookupBlocked;
     } catch (error) {
       console.error('Ошибка загрузки сортов:', error);
       const detail = formatSupabaseError(error);
-      const policy = isRlsError(error) ? ' Нужна RLS-policy SELECT на public.varieties для роли anon.' : '';
+      const policy = isRlsError(error) ? ' Проверьте членство и RLS-policy SELECT для authenticated на public.varieties.' : '';
       showSeasonFormMessage(`Не удалось загрузить сорта: ${detail}.${policy}`, 'error');
       setStatus(`Ошибка чтения public.varieties: ${detail}.${policy}`, 'error', false);
       seasonLookupBlocked = true;
@@ -828,6 +917,15 @@
   ui.myFields.addEventListener('click', () => {
     if (!isReady) return;
     openFieldsList();
+  });
+  ui.farmSelector.addEventListener('change', () => {
+    activeFarmId = ui.farmSelector.value || null;
+    clearRenderedFields();
+    selectedId = null;
+    draft = null;
+    resetCard();
+    if (activeFarmId) void loadFieldsFromSupabase();
+    else setDataActionsEnabled(false);
   });
   $('#fields-list-close').addEventListener('click', openFieldDetails);
   ui.fieldsSearch.addEventListener('input', renderFieldsList);
@@ -859,4 +957,10 @@
   initializeSupabase();
   window.addEventListener('resize', () => map.invalidateSize({ pan: false }));
   window.fieldManagerMap = { map, osmLayer, satelliteLayer, layerControl, fields, fieldsLayer, areaHectares, loadFieldsFromSupabase, renderFieldsList };
+  window.fieldManagerAuth = Object.freeze({
+    getCurrentUser,
+    requireUser,
+    getSession: () => currentSession,
+    getLastAuthEvent: () => lastAuthEvent
+  });
 })();
