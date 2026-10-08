@@ -30,6 +30,16 @@
         <div class="draw-banner" id="draw-banner" hidden>Кликайте, чтобы обвести границу; двойной щелчок завершит поле <button id="cancel-add" type="button">Отмена</button></div>
       </section>
       <aside class="details-panel" aria-labelledby="details-title">
+        <section class="fields-list-view" id="fields-list-view" aria-labelledby="fields-list-title" hidden>
+          <div class="panel-heading fields-list-heading"><div><p class="eyebrow">УЧЁТ</p><h1 id="fields-list-title">Мои поля</h1></div><button class="list-close" id="fields-list-close" type="button" aria-label="Закрыть список полей">×</button></div>
+          <div class="fields-list-controls">
+            <label class="field-list-search"><span class="visually-hidden">Поиск по названию или номеру поля</span><span aria-hidden="true">⌕</span><input id="fields-list-search" type="search" placeholder="Название или номер" autocomplete="off"></label>
+            <div class="field-list-filters"><label><span class="visually-hidden">Фильтр по культуре</span><select id="fields-crop-filter"><option value="">Все культуры</option></select></label><label><span class="visually-hidden">Фильтр по году</span><select id="fields-year-filter"><option value="">Все годы</option></select></label></div>
+          </div>
+          <div class="fields-list" id="fields-list" role="list" aria-live="polite"></div>
+          <div class="fields-list-summary" id="fields-list-summary" role="status" aria-live="polite">Загрузка списка…</div>
+        </section>
+        <div id="field-details-view" class="field-details-view">
         <div class="panel-heading"><div><p class="eyebrow">ИНФОРМАЦИЯ</p><h1 id="details-title">Выбранное поле</h1></div><span class="panel-menu" aria-hidden="true">···</span></div>
         <div class="empty-state" id="empty-state"><div class="empty-illustration" aria-hidden="true"><span class="field-line line-one"></span><span class="field-line line-two"></span><span class="field-line line-three"></span><span class="pin">＋</span></div><h2>Пока нет выбранного поля</h2><p>Выберите поле на карте или добавьте новое, чтобы увидеть его информацию здесь.</p><button class="text-action" id="empty-add-field" type="button">＋ Добавить поле</button></div>
         <form class="field-info" id="field-form" hidden>
@@ -47,6 +57,7 @@
           <div class="form-actions"><button class="save-field" id="save-field" type="submit">Сохранить</button><button class="cancel-field" id="cancel-field" type="button">Отмена</button><button class="delete-field" id="delete-field" type="button" hidden>Удалить поле</button></div>
         </form>
         <div class="panel-footer"><span class="footer-dot"></span> Поля синхронизируются с Supabase</div>
+        </div>
       </aside>
     </main>
     <footer class="mobile-footer"><span class="footer-dot"></span> OpenStreetMap · Карта сельхозполей</footer>
@@ -58,3 +69,4 @@
   <script src="app.js"></script>
 </body>
 </html>
+

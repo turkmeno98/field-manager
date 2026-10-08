@@ -34,6 +34,9 @@
   const ui = {
     add: $('#add-field'), emptyAdd: $('#empty-add-field'), myFields: $('#my-fields'),
     layersToggle: $('#layers-toggle'),
+    fieldsListView: $('#fields-list-view'), fieldsDetailsView: $('#field-details-view'),
+    fieldsList: $('#fields-list'), fieldsListSummary: $('#fields-list-summary'),
+    fieldsSearch: $('#fields-list-search'), cropFilter: $('#fields-crop-filter'), yearFilter: $('#fields-year-filter'),
     searchToggle: $('#search-toggle'), searchPanel: $('#search-panel'),
     hint: $('#map-hint'), drawBanner: $('#draw-banner'), emptyState: $('#empty-state'),
     status: $('#sync-status'), statusText: $('.sync-status-text'), retry: $('#retry-sync'),
@@ -125,6 +128,89 @@
     selectedId = null;
   }
 
+  function openFieldsList() {
+    ui.fieldsListView.hidden = false;
+    ui.fieldsDetailsView.hidden = true;
+    renderFieldsList();
+    window.setTimeout(() => ui.fieldsSearch.focus(), 0);
+  }
+
+  function openFieldDetails() {
+    ui.fieldsListView.hidden = true;
+    ui.fieldsDetailsView.hidden = false;
+  }
+
+  function updateFilterOptions(select, label, values) {
+    const current = select.value;
+    const unique = [...new Set(values.filter((value) => value !== '' && value != null).map(String))];
+    unique.sort((a, b) => label === 'год' ? Number(b) - Number(a) : a.localeCompare(b, 'ru'));
+    select.replaceChildren(new Option(`Все ${label === 'культура' ? 'культуры' : 'годы'}`, ''));
+    unique.forEach((value) => select.add(new Option(value, value)));
+    if (unique.includes(current)) select.value = current;
+  }
+
+  function renderFieldsList() {
+    if (!ui.fieldsList) return;
+    const values = [...fields.values()];
+    updateFilterOptions(ui.cropFilter, 'культура', values.map(({ feature }) => feature.properties.crop));
+    updateFilterOptions(ui.yearFilter, 'год', values.map(({ feature }) => feature.properties.year));
+    const search = ui.fieldsSearch.value.trim().toLocaleLowerCase('ru');
+    const crop = ui.cropFilter.value;
+    const year = ui.yearFilter.value;
+    const visible = values.filter(({ feature }) => {
+      const props = feature.properties;
+      return (!search || String(props.name || '').toLocaleLowerCase('ru').includes(search))
+        && (!crop || String(props.crop || '') === crop)
+        && (!year || String(props.year ?? '') === year);
+    });
+    ui.fieldsList.replaceChildren();
+    if (!visible.length) {
+      const empty = document.createElement('div');
+      empty.className = 'fields-list-empty';
+      empty.textContent = values.length ? 'По заданным условиям поля не найдены.' : 'Поля пока не добавлены.';
+      ui.fieldsList.append(empty);
+    } else {
+      visible.forEach(({ id, feature }) => {
+        const props = feature.properties;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `field-list-item${id === selectedId ? ' is-selected' : ''}`;
+        button.setAttribute('role', 'listitem');
+        button.setAttribute('aria-current', id === selectedId ? 'true' : 'false');
+        const top = document.createElement('span');
+        top.className = 'field-list-item-top';
+        const name = document.createElement('strong');
+        name.textContent = props.name || 'Без названия';
+        const area = document.createElement('span');
+        area.className = 'field-list-area';
+        area.textContent = `${formatArea(areaHectares(feature.geometry))} га`;
+        top.append(name, area);
+        const cropLabel = document.createElement('span');
+        cropLabel.className = 'field-list-crop';
+        cropLabel.textContent = props.crop || 'Культура не указана';
+        button.append(top, cropLabel);
+        button.addEventListener('click', () => {
+          selectField(id);
+          const bounds = fields.get(id)?.layer.getBounds();
+          if (bounds?.isValid()) map.fitBounds(bounds.pad(0.18), { maxZoom: 16, animate: true });
+          openFieldDetails();
+        });
+        ui.fieldsList.append(button);
+      });
+    }
+    const totalArea = visible.reduce((total, { feature }) => total + areaHectares(feature.geometry), 0);
+    ui.fieldsListSummary.textContent = `${visible.length} ${pluralize(visible.length, 'поле', 'поля', 'полей')} · ${formatArea(totalArea)} га`;
+  }
+
+  function pluralize(count, one, few, many) {
+    const n = Math.abs(count) % 100;
+    const last = n % 10;
+    if (n > 10 && n < 20) return many;
+    if (last > 1 && last < 5) return few;
+    if (last === 1) return one;
+    return many;
+  }
+
   function setDataActionsEnabled(enabled) {
     isReady = enabled;
     ui.add.disabled = !enabled;
@@ -146,6 +232,7 @@
         try { renderFeature(rowToFeature(row)); }
         catch (error) { invalidRows.push(error.message); }
       }
+      renderFieldsList();
       setDataActionsEnabled(true);
       if (invalidRows.length) {
         setStatus(`Загружено ${fields.size} полей. Пропущено записей с ошибочной геометрией: ${invalidRows.length}. ${invalidRows[0]}`, 'error', true);
@@ -250,8 +337,10 @@
     if (!field) return;
     draft = null;
     selectedId = id;
+    openFieldDetails();
     updateStyles();
     fillForm(field, false);
+    renderFieldsList();
   }
 
   function stopDrawing() {
@@ -355,6 +444,7 @@
       }
       updateStyles();
       fillForm(fields.get(selectedId), false);
+      renderFieldsList();
       setStatus(isNew ? 'Поле сохранено в Supabase.' : 'Изменения сохранены в Supabase.', 'success');
       window.setTimeout(() => { if (ui.status.classList.contains('is-success')) ui.status.hidden = true; }, 3500);
     } catch (error) {
@@ -395,6 +485,7 @@
       fields.delete(deletedId);
       selectedId = null;
       resetCard();
+      renderFieldsList();
       setStatus('Поле удалено из Supabase.', 'success');
       window.setTimeout(() => { if (ui.status.classList.contains('is-success')) ui.status.hidden = true; }, 3500);
     } catch (error) {
@@ -427,17 +518,12 @@
 
   ui.myFields.addEventListener('click', () => {
     if (!isReady) return;
-    if (!fields.size) {
-      ui.emptyState.querySelector('h2').textContent = 'Пока нет добавленных полей';
-      ui.emptyState.querySelector('p').textContent = 'Нажмите «Добавить поле» и обведите границу на карте.';
-      ui.emptyState.hidden = false;
-      ui.form.hidden = true;
-      return;
-    }
-    map.fitBounds(fieldsLayer.getBounds().pad(0.12), { maxZoom: 15 });
-    const first = fields.values().next().value;
-    selectField(first.id);
+    openFieldsList();
   });
+  $('#fields-list-close').addEventListener('click', openFieldDetails);
+  ui.fieldsSearch.addEventListener('input', renderFieldsList);
+  ui.cropFilter.addEventListener('change', renderFieldsList);
+  ui.yearFilter.addEventListener('change', renderFieldsList);
   ui.layersToggle.addEventListener('click', () => {
     const control = layerControl.getContainer();
     const isExpanded = control.classList.contains('leaflet-control-layers-expanded');
@@ -463,5 +549,6 @@
   setDataActionsEnabled(false);
   initializeSupabase();
   window.addEventListener('resize', () => map.invalidateSize({ pan: false }));
-  window.fieldManagerMap = { map, osmLayer, satelliteLayer, layerControl, fields, fieldsLayer, areaHectares, loadFieldsFromSupabase };
+  window.fieldManagerMap = { map, osmLayer, satelliteLayer, layerControl, fields, fieldsLayer, areaHectares, loadFieldsFromSupabase, renderFieldsList };
 })();
+

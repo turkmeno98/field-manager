@@ -3,3 +3,4 @@ window.SUPABASE_CONFIG = {
   url: 'https://gdstojkwytqekvomsxhw.supabase.co',
   publishableKey: ''
 };
+
