@@ -5,13 +5,22 @@
   const STORAGE_KEY = 'field-manager.geojson.v1';
   const EARTH_RADIUS_METERS = 6371008.8;
   const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([55.75, 37.62], 5);
-  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  const osmLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
   }).addTo(map);
+  const satelliteLayer = L.tileLayer('https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg', {
+    maxZoom: 19,
+    maxNativeZoom: 14,
+    attribution: '<a href="https://cloudless.eox.at/">EOxCloudless</a> by <a href="https://eox.at/">EOX IT Services GmbH</a> (Contains modified Copernicus Sentinel data 2016 &amp; 2017) · <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>'
+  });
   L.control.zoom({ position: 'bottomright' }).addTo(map);
+  L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 120 }).addTo(map);
 
   const fieldsLayer = L.featureGroup().addTo(map);
+  const layerControl = L.control.layers({ '🗺️ Карта': osmLayer, '🛰️ Спутник': satelliteLayer }, null, {
+    position: 'topright', collapsed: true, autoZIndex: true, sortLayers: false
+  }).addTo(map);
   const fields = new Map();
   let draft = null;
   let selectedId = null;
@@ -20,7 +29,7 @@
   const $ = (selector) => document.querySelector(selector);
   const ui = {
     add: $('#add-field'), emptyAdd: $('#empty-add-field'), myFields: $('#my-fields'),
-    layersToggle: $('#layers-toggle'), layersPanel: $('#layers-panel'),
+    layersToggle: $('#layers-toggle'),
     searchToggle: $('#search-toggle'), searchPanel: $('#search-panel'),
     hint: $('#map-hint'), drawBanner: $('#draw-banner'), emptyState: $('#empty-state'),
     form: $('#field-form'), name: $('#field-name'), area: $('#field-area'),
@@ -295,18 +304,16 @@
     selectField(first.id);
   });
   ui.layersToggle.addEventListener('click', () => {
-    const open = ui.layersPanel.hidden;
-    ui.layersPanel.hidden = !open;
-    ui.layersToggle.setAttribute('aria-expanded', String(open));
-    ui.searchPanel.hidden = true;
-    ui.searchToggle.setAttribute('aria-expanded', 'false');
+    const control = layerControl.getContainer();
+    const isExpanded = control.classList.contains('leaflet-control-layers-expanded');
+    if (isExpanded) layerControl.collapse();
+    else layerControl.expand();
+    ui.layersToggle.setAttribute('aria-expanded', String(!isExpanded));
   });
   ui.searchToggle.addEventListener('click', () => {
     const open = ui.searchPanel.hidden;
     ui.searchPanel.hidden = !open;
     ui.searchToggle.setAttribute('aria-expanded', String(open));
-    ui.layersPanel.hidden = true;
-    ui.layersToggle.setAttribute('aria-expanded', 'false');
     if (open) $('#map-search').focus();
   });
   ui.searchPanel.addEventListener('submit', (event) => {
@@ -318,5 +325,6 @@
   });
 
   loadFields();
-  window.fieldManagerMap = { map, osmLayer, fields, areaHectares };
+  window.addEventListener('resize', () => map.invalidateSize({ pan: false }));
+  window.fieldManagerMap = { map, osmLayer, satelliteLayer, layerControl, fields, fieldsLayer, areaHectares };
 })();
