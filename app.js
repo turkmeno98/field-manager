@@ -67,6 +67,7 @@
   let technologyRows = [];
   let technologyListRequest = 0;
   let technologyDetailsRequest = 0;
+  let seasonDashboardRequest = 0;
   const $ = (selector) => document.querySelector(selector);
   const ui = {
     farmSelector: $('#farm-selector'),
@@ -98,6 +99,10 @@
     seasonCrop: $('#season-crop-input'), seasonVariety: $('#season-variety-input'),
     seasonPlannedYield: $('#season-planned-yield'), seasonActualYield: $('#season-actual-yield'),
     seasonSave: $('#season-save'),
+    seasonDashboard: $('#season-dashboard-modal'), seasonDashboardClose: $('#season-dashboard-close'),
+    seasonDashboardYear: $('#season-dashboard-year'), seasonDashboardRefresh: $('#season-dashboard-refresh'),
+    seasonDashboardMessage: $('#season-dashboard-message'), seasonDashboardSummary: $('#season-dashboard-summary'),
+    seasonDashboardCrops: $('#season-dashboard-crops'), seasonDashboardFields: $('#season-dashboard-fields'),
     cropDirectory: $('#open-crop-directory'), cropModal: $('#crop-modal'), cropClose: $('#crop-close'),
     cropList: $('#crop-list'), cropForm: $('#crop-form'), cropName: $('#crop-name'), cropCode: $('#crop-code'),
     cropSave: $('#crop-save'), cropMessage: $('#crop-message'), cropTitle: $('#crop-dialog-title'),
@@ -700,6 +705,168 @@
         ? 'Чтение операций запрещено RLS. Проверьте доступ к технологии в этом хозяйстве.'
         : `Не удалось загрузить операции: ${formatSupabaseError(error)}`, 'error');
     }
+  }
+
+  function showSeasonDashboardMessage(message, kind = 'info') {
+    ui.seasonDashboardMessage.textContent = message;
+    ui.seasonDashboardMessage.className = `season-dashboard-message is-${kind}`;
+    ui.seasonDashboardMessage.hidden = !message;
+  }
+
+  function seasonDashboardYears() {
+    const current = new Date().getFullYear();
+    const years = new Set([current - 1, current, current + 1]);
+    fields.forEach(({ feature }) => {
+      const value = Number(feature.properties.year);
+      if (Number.isFinite(value) && value >= 1900 && value <= 2200) years.add(value);
+    });
+    return [...years].sort((a, b) => b - a);
+  }
+
+  function prepareSeasonDashboardYears() {
+    const current = ui.seasonDashboardYear.value;
+    ui.seasonDashboardYear.replaceChildren();
+    for (const year of seasonDashboardYears()) ui.seasonDashboardYear.add(new Option(String(year), String(year)));
+    if ([...ui.seasonDashboardYear.options].some((option) => option.value === current)) {
+      ui.seasonDashboardYear.value = current;
+    } else {
+      ui.seasonDashboardYear.value = String(new Date().getFullYear());
+    }
+  }
+
+  function formatNumber(value, digits = 1) {
+    return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(Number(value) || 0);
+  }
+
+  async function loadSeasonDashboard() {
+    if (!authenticatedUser || !activeFarmId || !supabase || !isReady) return;
+    const farmId = activeFarmId;
+    const year = Number(ui.seasonDashboardYear.value);
+    const requestId = ++seasonDashboardRequest;
+    showSeasonDashboardMessage('Загружаем сезон…', 'info');
+    ui.seasonDashboardSummary.replaceChildren();
+    ui.seasonDashboardCrops.replaceChildren();
+    ui.seasonDashboardFields.replaceChildren();
+
+    try {
+      const fieldRows = [...fields.values()];
+      const fieldIds = fieldRows.map(({ id }) => id);
+      let seasons = [];
+      if (fieldIds.length) {
+        const result = await supabase.from('field_seasons')
+          .select('id,field_id,season_year,season_no,status')
+          .in('field_id', fieldIds)
+          .eq('season_year', year)
+          .order('season_no', { ascending: true });
+        if (result.error) throw Object.assign(result.error, { tableName: 'field_seasons' });
+        seasons = result.data || [];
+      }
+
+      const seasonIds = seasons.map((row) => row.id);
+      let cropRows = [];
+      if (seasonIds.length) {
+        const result = await supabase.from('season_crops')
+          .select('season_id,planned_crop_id,planned_variety_id,planned_yield_c_ha,actual_yield_c_ha')
+          .in('season_id', seasonIds);
+        if (result.error) throw Object.assign(result.error, { tableName: 'season_crops' });
+        cropRows = result.data || [];
+      }
+
+      const cropIds = [...new Set(cropRows.map((row) => row.planned_crop_id).filter(Boolean))];
+      const cropMap = new Map();
+      if (cropIds.length) {
+        const result = await supabase.from('crops').select('id,name').in('id', cropIds);
+        if (result.error) throw Object.assign(result.error, { tableName: 'crops' });
+        (result.data || []).forEach((row) => cropMap.set(String(row.id), referenceName(row) || 'Без названия'));
+      }
+
+      if (requestId !== seasonDashboardRequest || activeFarmId !== farmId) return;
+
+      const seasonByField = new Map(seasons.map((row) => [String(row.field_id), row]));
+      const cropBySeason = new Map(cropRows.map((row) => [String(row.season_id), row]));
+      const cropStats = new Map();
+
+      fieldRows.forEach(({ id, feature }) => {
+        const fieldArea = areaHectares(feature.geometry);
+        const fieldCrop = String(feature.properties.crop || '').trim() || 'Культура не указана';
+        const stat = cropStats.get(fieldCrop) || { name: fieldCrop, area: 0, fields: 0, planned: 0 };
+        stat.area += fieldArea;
+        stat.fields += 1;
+        const season = seasonByField.get(String(id));
+        if (season) stat.planned += fieldArea;
+        cropStats.set(fieldCrop, stat);
+      });
+
+      const totalArea = fieldRows.reduce((sum, item) => sum + areaHectares(item.feature.geometry), 0);
+      const seasonArea = seasons.reduce((sum, row) => {
+        const item = fieldRows.find((field) => String(field.id) === String(row.field_id));
+        return sum + (item ? areaHectares(item.feature.geometry) : 0);
+      }, 0);
+
+      appendText(ui.seasonDashboardSummary, 'div', 'season-dashboard-stat',
+        `<strong>${formatNumber(totalArea, 1)}</strong><span>га полей</span>`);
+      appendText(ui.seasonDashboardSummary, 'div', 'season-dashboard-stat',
+        `<strong>${fieldRows.length}</strong><span>${pluralize(fieldRows.length, 'поле', 'поля', 'полей')}</span>`);
+      appendText(ui.seasonDashboardSummary, 'div', 'season-dashboard-stat',
+        `<strong>${formatNumber(seasonArea, 1)}</strong><span>га с сезоном</span>`);
+
+      ui.seasonDashboardCrops.replaceChildren();
+      if (!fieldRows.length) {
+        appendText(ui.seasonDashboardCrops, 'p', 'season-dashboard-empty', 'В выбранном хозяйстве пока нет полей.');
+      } else {
+        for (const stat of [...cropStats.values()].sort((a,b)=>b.area-a.area)) {
+          const card=document.createElement('article');
+          card.className='season-dashboard-crop';
+          appendText(card,'strong','',stat.name);
+          appendText(card,'span','',`${formatNumber(stat.area,1)} га · ${stat.fields} ${pluralize(stat.fields,'поле','поля','полей')}`);
+          const progress=document.createElement('div'); progress.className='season-dashboard-progress';
+          const fill=document.createElement('span'); fill.style.width=`${stat.area ? Math.min(100,stat.planned/stat.area*100) : 0}%`;
+          progress.append(fill); card.append(progress);
+          appendText(card,'small','',`${formatNumber(stat.planned,1)} га имеют запись сезона`);
+          ui.seasonDashboardCrops.append(card);
+        }
+      }
+
+      ui.seasonDashboardFields.replaceChildren();
+      const heading=document.createElement('div'); heading.className='season-dashboard-section-heading';
+      appendText(heading,'h3','',`Поля — ${year}`);
+      appendText(heading,'span','',`${seasons.length} из ${fieldRows.length} с сезоном`);
+      ui.seasonDashboardFields.append(heading);
+
+      if (!fieldRows.length) {
+        appendText(ui.seasonDashboardFields,'p','season-dashboard-empty','Нет полей.');
+      } else {
+        const list=document.createElement('div'); list.className='season-dashboard-field-list';
+        fieldRows.sort((a,b)=>String(a.feature.properties.name||'').localeCompare(String(b.feature.properties.name||''),'ru')).forEach(({id,feature})=>{
+          const season=seasonByField.get(String(id));
+          const entry=season ? cropBySeason.get(String(season.id)) : null;
+          const row=document.createElement('div'); row.className='season-dashboard-field';
+          const info=document.createElement('div'); info.className='season-dashboard-field-info';
+          appendText(info,'strong','',feature.properties.name || 'Без названия');
+          appendText(info,'span','',`${formatNumber(areaHectares(feature.geometry),1)} га · ${feature.properties.crop || 'Культура не указана'}`);
+          const status=season ? seasonStatusLabel(season.status) : 'Сезон не создан';
+          appendText(info,'small','',entry?.planned_crop_id ? `${cropMap.get(String(entry.planned_crop_id)) || 'Культура'} · ${status}` : status);
+          const open=document.createElement('button'); open.type='button'; open.className='season-dashboard-open'; open.textContent=season ? 'Открыть' : 'Добавить';
+          open.addEventListener('click',()=>{ ui.seasonDashboard.hidden=true; selectField(String(id)); openFieldDetails(); if(!season) window.setTimeout(()=>ui.seasonAdd.click(),80); });
+          row.append(info,open); list.append(row);
+        });
+        ui.seasonDashboardFields.append(list);
+      }
+      showSeasonDashboardMessage('');
+    } catch(error) {
+      console.error('Ошибка панели сезона:', error);
+      showSeasonDashboardMessage(`Не удалось загрузить сезон: ${formatSupabaseError(error)}`, 'error');
+    }
+  }
+
+  async function openSeasonDashboard() {
+    if (!authenticatedUser || !activeFarmId || !isReady || !supabase) {
+      setStatus('Сначала войдите и выберите хозяйство.', 'info');
+      return;
+    }
+    prepareSeasonDashboardYears();
+    ui.seasonDashboard.hidden=false;
+    await loadSeasonDashboard();
   }
 
   function showSeasonFormMessage(message, kind = 'info') {
@@ -1440,6 +1607,11 @@
   });
   $('#clear-selection').addEventListener('click', clearSelection);
   ui.delete.addEventListener('click', deleteSelectedField);
+  $('#open-season-dashboard').addEventListener('click', openSeasonDashboard);
+  $('#season-dashboard-close').addEventListener('click', () => { ui.seasonDashboard.hidden = true; });
+  ui.seasonDashboard.addEventListener('click', (event) => { if (event.target === ui.seasonDashboard) ui.seasonDashboard.hidden = true; });
+  ui.seasonDashboardYear.addEventListener('change', () => { void loadSeasonDashboard(); });
+  ui.seasonDashboardRefresh.addEventListener('click', () => { void loadSeasonDashboard(); });
   ui.cropDirectory.addEventListener('click', openCropDirectory);
   ui.cropClose.addEventListener('click', () => { ui.cropModal.hidden = true; });
   $('#crop-cancel').addEventListener('click', () => { ui.cropModal.hidden = true; });
@@ -1491,6 +1663,7 @@
     openFieldsList();
   });
   ui.farmSelector.addEventListener('change', () => {
+    ui.seasonDashboard.hidden = true;
     activeFarmId = ui.farmSelector.value || null;
     updateSelectedFarmRole();
     clearRenderedFields();
