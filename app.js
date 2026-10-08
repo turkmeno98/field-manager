@@ -74,7 +74,10 @@
     seasonFormMessage: $('#season-form-message'), seasonYear: $('#season-year'), seasonStatus: $('#season-status-input'),
     seasonCrop: $('#season-crop-input'), seasonVariety: $('#season-variety-input'),
     seasonPlannedYield: $('#season-planned-yield'), seasonActualYield: $('#season-actual-yield'),
-    seasonSave: $('#season-save')
+    seasonSave: $('#season-save'),
+    cropDirectory: $('#open-crop-directory'), cropModal: $('#crop-modal'), cropClose: $('#crop-close'),
+    cropList: $('#crop-list'), cropForm: $('#crop-form'), cropName: $('#crop-name'), cropCode: $('#crop-code'),
+    cropSave: $('#crop-save'), cropMessage: $('#crop-message')
   };
 
   function geodesicRingArea(ring) {
@@ -346,6 +349,7 @@
         activeFarmId = null;
         ui.farmSelector.replaceChildren(new Option('Требуется вход', ''));
         ui.farmSelector.disabled = true;
+        ui.cropDirectory.disabled = true;
         ui.farmRole.hidden = true;
         clearRenderedFields();
         selectedId = null;
@@ -368,6 +372,93 @@
     if (event === 'SIGNED_IN' || previousId !== nextUser.id || !isReady) {
       showAuthLoading();
       await loadFieldsFromSupabase();
+    }
+  }
+
+  function showCropMessage(message, kind = 'info') {
+    ui.cropMessage.textContent = message;
+    ui.cropMessage.className = `crop-message is-${kind}`;
+    ui.cropMessage.hidden = !message;
+  }
+
+  async function loadCropDirectory() {
+    if (!supabase || !activeFarmId) return;
+    ui.cropList.replaceChildren();
+    const loading = document.createElement('p');
+    loading.className = 'crop-empty';
+    loading.textContent = 'Загружаем культуры…';
+    ui.cropList.append(loading);
+    try {
+      const { data, error } = await supabase.from('crops').select('id,name,code,created_at')
+        .eq('farm_id', activeFarmId).order('name', { ascending: true });
+      if (error) throw error;
+      ui.cropList.replaceChildren();
+      if (!(data || []).length) {
+        const empty = document.createElement('p');
+        empty.className = 'crop-empty';
+        empty.textContent = 'Культур пока нет. Добавьте первую ниже.';
+        ui.cropList.append(empty);
+        return;
+      }
+      for (const crop of data) {
+        const item = document.createElement('article');
+        item.className = 'crop-item';
+        const title = document.createElement('strong');
+        title.textContent = crop.name || 'Без названия';
+        const code = document.createElement('span');
+        code.textContent = crop.code || 'Без кода';
+        item.append(title, code);
+        ui.cropList.append(item);
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки справочника культур:', error);
+      const item = document.createElement('p');
+      item.className = 'crop-empty crop-error';
+      item.textContent = `Не удалось загрузить культуры: ${formatSupabaseError(error)}`;
+      ui.cropList.replaceChildren(item);
+      showCropMessage(isRlsError(error)
+        ? 'Чтение справочника запрещено RLS. Проверьте членство в хозяйстве.'
+        : formatSupabaseError(error), 'error');
+    }
+  }
+
+  async function openCropDirectory() {
+    if (!authenticatedUser || !activeFarmId || !isReady || !supabase) {
+      setStatus('Сначала войдите и выберите хозяйство.', 'info');
+      return;
+    }
+    ui.cropModal.hidden = false;
+    ui.cropForm.reset();
+    showCropMessage('');
+    await loadCropDirectory();
+    window.setTimeout(() => ui.cropName.focus(), 0);
+  }
+
+  async function saveCrop(event) {
+    event.preventDefault();
+    if (!ui.cropForm.reportValidity() || !supabase || !activeFarmId) return;
+    ui.cropSave.disabled = true;
+    showCropMessage('Сохраняем культуру…');
+    try {
+      const name = ui.cropName.value.trim();
+      const code = ui.cropCode.value.trim().toUpperCase() || null;
+      const { error } = await supabase.from('crops').insert({
+        farm_id: activeFarmId, name, code
+      });
+      if (error) throw error;
+      ui.cropForm.reset();
+      showCropMessage('Культура добавлена.', 'success');
+      await loadCropDirectory();
+    } catch (error) {
+      console.error('Ошибка добавления культуры:', error);
+      const duplicate = error?.code === '23505';
+      showCropMessage(duplicate
+        ? 'Такая культура или код уже существуют в этом хозяйстве.'
+        : (isRlsError(error)
+          ? 'Нет права добавлять культуры. Нужна соответствующая роль в хозяйстве.'
+          : formatSupabaseError(error)), 'error');
+    } finally {
+      ui.cropSave.disabled = false;
     }
   }
 
@@ -742,6 +833,7 @@
     ui.myFields.disabled = !enabled;
     ui.seasonAdd.disabled = !enabled || !selectedId;
   }
+  
 
   async function loadAccessibleFarms(user = authenticatedUser, preferredFarmId = null) {
     if (!user?.id) throw new Error('Не удалось определить текущего пользователя Supabase Auth.');
@@ -778,6 +870,7 @@
     activeFarmId = String(selected);
     ui.farmSelector.value = activeFarmId;
     ui.farmSelector.disabled = false;
+    ui.cropDirectory.disabled = false;
     updateSelectedFarmRole();
     ui.authModal.hidden = true;
     return true;
@@ -1102,7 +1195,12 @@
   });
   $('#clear-selection').addEventListener('click', clearSelection);
   ui.delete.addEventListener('click', deleteSelectedField);
-  ui.seasonAdd.addEventListener('click', openSeasonForm);
+  ui.cropDirectory.addEventListener('click', openCropDirectory);
+  ui.cropClose.addEventListener('click', () => { ui.cropModal.hidden = true; });
+  $('#crop-cancel').addEventListener('click', () => { ui.cropModal.hidden = true; });
+  ui.cropModal.addEventListener('click', (event) => { if (event.target === ui.cropModal) ui.cropModal.hidden = true; });
+  ui.cropForm.addEventListener('submit', saveCrop);
+    ui.seasonAdd.addEventListener('click', openSeasonForm);
   $('#season-close').addEventListener('click', () => { ui.seasonModal.hidden = true; });
   $('#season-cancel').addEventListener('click', () => { ui.seasonModal.hidden = true; });
   ui.seasonModal.addEventListener('click', (event) => { if (event.target === ui.seasonModal) ui.seasonModal.hidden = true; });
