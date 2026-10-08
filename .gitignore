@@ -1,6 +1,5 @@
-# Local Supabase public key configuration; never commit project credentials.
-supabase-config.js
+# Private local credentials are never committed. The browser-safe
+# supabase-config.js contains only the public URL and publishable key.
 .env
 .env.*
 !.env.example
-
