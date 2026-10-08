@@ -30,6 +30,11 @@
   let selectedId = null;
   let drawHandler = null;
   let nextFieldNumber = 1;
+  let seasonCrops = [];
+  let seasonVarieties = [];
+  let seasonSaving = false;
+  let seasonLookupBlocked = false;
+  let seasonHistoryRequest = 0;
   const $ = (selector) => document.querySelector(selector);
   const ui = {
     add: $('#add-field'), emptyAdd: $('#empty-add-field'), myFields: $('#my-fields'),
@@ -44,7 +49,12 @@
     crop: $('#field-crop'), variety: $('#field-variety'), year: $('#field-year'),
     yield: $('#field-yield'), note: $('#field-note'), heading: $('#field-card-heading'),
     caption: $('#field-caption'), save: $('#save-field'), delete: $('#delete-field'),
-    seasonHistory: $('#season-history')
+    seasonHistory: $('#season-history'), seasonAdd: $('#season-add'), seasonList: $('#season-list'),
+    seasonLoading: $('#season-loading'), seasonModal: $('#season-modal'), seasonForm: $('#season-form'),
+    seasonFormMessage: $('#season-form-message'), seasonYear: $('#season-year'), seasonStatus: $('#season-status-input'),
+    seasonCrop: $('#season-crop-input'), seasonVariety: $('#season-variety-input'),
+    seasonPlannedYield: $('#season-planned-yield'), seasonActualYield: $('#season-actual-yield'),
+    seasonSave: $('#season-save')
   };
 
   function geodesicRingArea(ring) {
@@ -89,6 +99,258 @@
     const detail = error?.message || error?.details || 'неизвестная ошибка';
     const code = error?.code ? ` (${error.code})` : '';
     return `${detail}${code}`;
+  }
+
+  function isRlsError(error) {
+    return error?.code === '42501' || /permission denied|row-level security|violates row.level security/i.test(error?.message || '');
+  }
+
+  function showSeasonFormMessage(message, kind = 'info') {
+    ui.seasonFormMessage.textContent = message;
+    ui.seasonFormMessage.className = `season-form-message is-${kind}`;
+    ui.seasonFormMessage.hidden = !message;
+  }
+
+  function seasonStatusLabel(status) {
+    return ({ planned: 'Запланирован', active: 'Активен', completed: 'Завершён', cancelled: 'Отменён' })[status] || status || 'Не указан';
+  }
+
+  function referenceName(row) {
+    return row?.name || row?.crop_name || row?.variety_name || row?.title || row?.label || '';
+  }
+
+  function showSeasonReadError(error, table) {
+    const detail = formatSupabaseError(error);
+    const policy = isRlsError(error)
+      ? ` Для чтения нужна RLS-policy SELECT на public.${table} для используемой роли (сейчас клиент работает как anon).`
+      : '';
+    ui.seasonList.replaceChildren();
+    const item = document.createElement('p');
+    item.className = 'season-empty season-error';
+    item.textContent = `Не удалось загрузить сезоны: ${detail}.${policy}`;
+    ui.seasonList.append(item);
+    setStatus(`Ошибка чтения public.${table}: ${detail}.${policy}`, 'error', false);
+  }
+
+  async function loadSeasonHistory(fieldId) {
+    if (!supabase || !fieldId) return false;
+    const requestId = ++seasonHistoryRequest;
+    ui.seasonLoading.hidden = false;
+    ui.seasonList.replaceChildren();
+    try {
+      const seasonResult = await supabase.from('field_seasons').select('*').eq('field_id', fieldId)
+        .order('season_year', { ascending: false }).order('season_no', { ascending: true });
+      if (seasonResult.error) throw Object.assign(seasonResult.error, { tableName: 'field_seasons' });
+      const seasons = seasonResult.data || [];
+      if (!seasons.length) {
+        if (requestId !== seasonHistoryRequest || selectedId !== fieldId) return false;
+        const empty = document.createElement('p');
+        empty.className = 'season-empty';
+        empty.textContent = 'Сезонов пока нет. Если список неожиданно пуст, проверьте SELECT-политику RLS для field_seasons.';
+        ui.seasonList.replaceChildren(empty);
+        return true;
+      }
+
+      const seasonIds = seasons.map((season) => season.id);
+      const cropsResult = await supabase.from('season_crops').select('*').in('field_season_id', seasonIds)
+        .order('sequence_no', { ascending: true });
+      if (cropsResult.error) throw Object.assign(cropsResult.error, { tableName: 'season_crops' });
+      const cropRows = cropsResult.data || [];
+      const cropIds = [...new Set(cropRows.map((row) => row.planned_crop_id).filter(Boolean))];
+      const varietyIds = [...new Set(cropRows.map((row) => row.planned_variety_id).filter(Boolean))];
+      let cropLookup = new Map();
+      let varietyLookup = new Map();
+      if (cropIds.length) {
+        const result = await supabase.from('crops').select('*').in('id', cropIds);
+        if (result.error) throw Object.assign(result.error, { tableName: 'crops' });
+        cropLookup = new Map((result.data || []).map((row) => [String(row.id), referenceName(row)]));
+      }
+      if (varietyIds.length) {
+        const result = await supabase.from('varieties').select('*').in('id', varietyIds);
+        if (result.error) throw Object.assign(result.error, { tableName: 'varieties' });
+        varietyLookup = new Map((result.data || []).map((row) => [String(row.id), referenceName(row)]));
+      }
+      if (requestId !== seasonHistoryRequest || selectedId !== fieldId) return false;
+
+      const template = $('#season-item-template');
+      const fragment = document.createDocumentFragment();
+      for (const season of seasons) {
+        const entries = cropRows.filter((row) => String(row.field_season_id) === String(season.id));
+        for (const entry of entries.length ? entries : [null]) {
+          const item = template.content.firstElementChild.cloneNode(true);
+          item.querySelector('[data-season-year]').textContent = season.season_year ?? '—';
+          item.querySelector('[data-season-status]').textContent = seasonStatusLabel(season.status);
+          item.querySelector('[data-season-crop]').textContent = entry ? (cropLookup.get(String(entry.planned_crop_id)) || '—') : '—';
+          item.querySelector('[data-season-variety]').textContent = entry?.planned_variety_id ? (varietyLookup.get(String(entry.planned_variety_id)) || '—') : '—';
+          item.querySelector('[data-season-planned-yield]').textContent = entry?.planned_yield_c_ha ?? '—';
+          item.querySelector('[data-season-actual-yield]').textContent = entry?.actual_yield_c_ha ?? '—';
+          fragment.append(item);
+        }
+      }
+      ui.seasonList.replaceChildren(fragment);
+      return true;
+    } catch (error) {
+      console.error('Ошибка загрузки истории сезонов:', error);
+      if (requestId === seasonHistoryRequest && selectedId === fieldId) showSeasonReadError(error, error.tableName || 'field_seasons');
+      return false;
+    } finally {
+      if (requestId === seasonHistoryRequest) ui.seasonLoading.hidden = true;
+    }
+  }
+
+  async function loadSeasonCrops() {
+    ui.seasonCrop.replaceChildren(new Option('Загрузка культур…', ''));
+    ui.seasonCrop.disabled = true;
+    const { data, error } = await supabase.from('crops').select('*');
+    if (error) throw Object.assign(error, { tableName: 'crops' });
+    seasonCrops = (data || []).filter((row) => row.is_active !== false)
+      .sort((a, b) => referenceName(a).localeCompare(referenceName(b), 'ru'));
+    ui.seasonCrop.replaceChildren(new Option(seasonCrops.length ? 'Выберите культуру' : 'Нет доступных культур', ''));
+    for (const crop of seasonCrops) {
+      const name = referenceName(crop);
+      if (!name) continue;
+      ui.seasonCrop.add(new Option(name, String(crop.id)));
+    }
+    ui.seasonCrop.disabled = seasonCrops.length === 0;
+    if (!seasonCrops.length) {
+      showSeasonFormMessage('Список культур пуст или чтение ограничено RLS. Проверьте справочник public.crops и право SELECT для роли anon.', 'error');
+    } else {
+      showSeasonFormMessage('');
+    }
+  }
+
+  async function loadSeasonVarieties(cropId) {
+    seasonVarieties = [];
+    ui.seasonVariety.disabled = true;
+    ui.seasonVariety.replaceChildren(new Option('Загрузка сортов…', ''));
+    if (!cropId) {
+      ui.seasonVariety.replaceChildren(new Option('Сначала выберите культуру', ''));
+      return;
+    }
+    const { data, error } = await supabase.from('varieties').select('*').eq('crop_id', cropId);
+    if (error) throw Object.assign(error, { tableName: 'varieties' });
+    seasonVarieties = (data || []).filter((row) => row.is_active !== false)
+      .sort((a, b) => referenceName(a).localeCompare(referenceName(b), 'ru'));
+    ui.seasonVariety.replaceChildren(new Option('Без указания сорта / гибрида', ''));
+    for (const variety of seasonVarieties) {
+      const name = referenceName(variety);
+      if (name) ui.seasonVariety.add(new Option(name, String(variety.id)));
+    }
+    ui.seasonVariety.disabled = false;
+  }
+
+  async function openSeasonForm() {
+    if (!selectedId || !fields.has(selectedId) || !isReady || !supabase) return;
+    ui.seasonForm.reset();
+    ui.seasonYear.value = String(new Date().getFullYear());
+    ui.seasonStatus.value = 'planned';
+    seasonLookupBlocked = false;
+    ui.seasonModal.hidden = false;
+    ui.seasonSave.disabled = true;
+    showSeasonFormMessage('');
+    try {
+      await loadSeasonCrops();
+      ui.seasonSave.disabled = seasonCrops.length === 0;
+      ui.seasonYear.focus();
+    } catch (error) {
+      console.error('Ошибка загрузки культур:', error);
+      const detail = formatSupabaseError(error);
+      const policy = isRlsError(error) ? ' Нужна RLS-policy SELECT на public.crops для роли anon.' : '';
+      showSeasonFormMessage(`Не удалось загрузить культуры: ${detail}.${policy}`, 'error');
+      setStatus(`Ошибка чтения public.crops: ${detail}.${policy}`, 'error', false);
+      ui.seasonCrop.replaceChildren(new Option('Культуры недоступны', ''));
+      ui.seasonSave.disabled = true;
+    }
+  }
+
+  async function saveSeason(event) {
+    event.preventDefault();
+    if (seasonSaving || !ui.seasonForm.reportValidity()) return;
+    const fieldId = selectedId;
+    if (!fieldId || !fields.has(fieldId) || !isReady || !supabase) return;
+    const cropId = ui.seasonCrop.value;
+    const crop = seasonCrops.find((row) => String(row.id) === cropId);
+    if (!crop) {
+      showSeasonFormMessage('Выберите культуру из справочника.', 'error');
+      return;
+    }
+    const varietyId = ui.seasonVariety.value || null;
+    if (seasonLookupBlocked) {
+      showSeasonFormMessage('Сохранение остановлено: справочник сортов недоступен из-за ошибки доступа.', 'error');
+      return;
+    }
+    if (varietyId && !seasonVarieties.some((row) => String(row.id) === varietyId)) {
+      showSeasonFormMessage('Выбранный сорт не относится к выбранной культуре. Загрузите список сортов повторно.', 'error');
+      return;
+    }
+
+    const year = Number(ui.seasonYear.value);
+    const status = ui.seasonStatus.value;
+    seasonSaving = true;
+    ui.seasonSave.disabled = true;
+    showSeasonFormMessage('Проверяем сезон и сохраняем…');
+    setStatus('Сохраняем сезон в Supabase…', 'loading');
+    let createdSeason = null;
+    try {
+      const duplicateResult = await supabase.from('field_seasons').select('id').eq('field_id', fieldId)
+        .eq('season_year', year).limit(1);
+      if (duplicateResult.error) throw Object.assign(duplicateResult.error, { tableName: 'field_seasons' });
+      if (duplicateResult.data?.length) {
+        showSeasonFormMessage(`Для этого поля сезон ${year} уже существует.`, 'error');
+        setStatus(`Сезон ${year} для этого поля уже существует.`, 'error');
+        return;
+      }
+
+      const seasonResult = await supabase.from('field_seasons').insert({
+        field_id: fieldId, season_year: year, season_no: 1, status
+      }).select('*').single();
+      if (seasonResult.error) throw Object.assign(seasonResult.error, { tableName: 'field_seasons' });
+      createdSeason = seasonResult.data;
+
+      const cropResult = await supabase.from('season_crops').insert({
+        field_season_id: createdSeason.id,
+        sequence_no: 1,
+        planned_crop_id: crop.id,
+        planned_variety_id: varietyId,
+        planned_yield_c_ha: ui.seasonPlannedYield.value === '' ? null : Number(ui.seasonPlannedYield.value),
+        actual_yield_c_ha: ui.seasonActualYield.value === '' ? null : Number(ui.seasonActualYield.value),
+        status: 'planned'
+      }).select('*').single();
+      if (cropResult.error) {
+        if (isRlsError(cropResult.error)) {
+          throw Object.assign(cropResult.error, { tableName: 'season_crops' });
+        }
+        let cleanupNote = '';
+        const cleanup = await supabase.from('field_seasons').delete().eq('id', createdSeason.id).select('id');
+        if (cleanup.error || !cleanup.data?.length) cleanupNote = ` Не удалось подтвердить удаление незавершённой записи сезона${cleanup.error ? `: ${formatSupabaseError(cleanup.error)}` : ' (DELETE не вернул строку)'}.`;
+        const error = Object.assign(cropResult.error, { tableName: 'season_crops', cleanupNote });
+        throw error;
+      }
+
+      ui.seasonModal.hidden = true;
+      const refreshed = await loadSeasonHistory(fieldId);
+      if (refreshed) {
+        setStatus('Сезон сохранён и история обновлена.', 'success');
+        window.setTimeout(() => { if (ui.status.classList.contains('is-success')) ui.status.hidden = true; }, 4000);
+      }
+    } catch (error) {
+      console.error('Ошибка сохранения сезона:', error);
+      const detail = formatSupabaseError(error);
+      if (error.code === '23505') {
+        const message = `Сезон ${year} для этого поля уже существует (ограничение уникальности).`;
+        showSeasonFormMessage(message, 'error');
+        setStatus(message, 'error');
+        return;
+      }
+      const table = error.tableName || (createdSeason ? 'season_crops' : 'field_seasons');
+      const policy = isRlsError(error) ? ` Нужна RLS-policy INSERT на public.${table} для роли anon; при ошибке чтения также SELECT.` : '';
+      const cleanupNote = error.cleanupNote || '';
+      showSeasonFormMessage(`Не удалось сохранить сезон: ${detail}.${policy}${cleanupNote}`, 'error');
+      setStatus(`Ошибка записи public.${table}: ${detail}.${policy}${cleanupNote}`, 'error', false);
+    } finally {
+      seasonSaving = false;
+      ui.seasonSave.disabled = seasonCrops.length === 0;
+    }
   }
 
   function rowToFeature(row) {
@@ -330,6 +592,7 @@
     ui.save.textContent = isNew ? 'Сохранить' : 'Сохранить изменения';
     ui.delete.hidden = isNew;
     ui.seasonHistory.hidden = isNew;
+    ui.seasonAdd.disabled = isNew || !isReady;
     ui.emptyState.hidden = true;
     ui.form.hidden = false;
   }
@@ -343,6 +606,7 @@
     updateStyles();
     fillForm(field, false);
     renderFieldsList();
+    loadSeasonHistory(id);
   }
 
   function stopDrawing() {
@@ -358,6 +622,7 @@
     if (draft?.layer) map.removeLayer(draft.layer);
     draft = null;
     selectedId = null;
+    ui.seasonModal.hidden = true;
     updateStyles();
     ui.form.hidden = true;
     ui.emptyState.hidden = false;
@@ -459,6 +724,7 @@
   });
 
   function resetCard() {
+    ui.seasonModal.hidden = true;
     ui.form.hidden = true;
     ui.emptyState.hidden = false;
   }
@@ -507,6 +773,26 @@
   });
   $('#clear-selection').addEventListener('click', clearSelection);
   ui.delete.addEventListener('click', deleteSelectedField);
+  ui.seasonAdd.addEventListener('click', openSeasonForm);
+  $('#season-close').addEventListener('click', () => { ui.seasonModal.hidden = true; });
+  $('#season-cancel').addEventListener('click', () => { ui.seasonModal.hidden = true; });
+  ui.seasonModal.addEventListener('click', (event) => { if (event.target === ui.seasonModal) ui.seasonModal.hidden = true; });
+  ui.seasonForm.addEventListener('submit', saveSeason);
+  ui.seasonCrop.addEventListener('change', async () => {
+    seasonLookupBlocked = false;
+    try {
+      await loadSeasonVarieties(ui.seasonCrop.value);
+      ui.seasonSave.disabled = seasonCrops.length === 0;
+    } catch (error) {
+      console.error('Ошибка загрузки сортов:', error);
+      const detail = formatSupabaseError(error);
+      const policy = isRlsError(error) ? ' Нужна RLS-policy SELECT на public.varieties для роли anon.' : '';
+      showSeasonFormMessage(`Не удалось загрузить сорта: ${detail}.${policy}`, 'error');
+      setStatus(`Ошибка чтения public.varieties: ${detail}.${policy}`, 'error', false);
+      seasonLookupBlocked = isRlsError(error);
+      ui.seasonSave.disabled = true;
+    }
+  });
   $('#dismiss-hint').addEventListener('click', () => { ui.hint.hidden = true; });
   map.on(L.Draw.Event.CREATED, (event) => newDraft(event.layer));
   map.on(L.Draw.Event.DRAWSTOP, () => {
